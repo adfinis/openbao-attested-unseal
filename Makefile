@@ -8,4 +8,5 @@ include mk/build.mk
 include mk/checks.mk
 include mk/security.mk
 include mk/docs.mk
+include mk/e2e.mk
 include mk/ci.mk

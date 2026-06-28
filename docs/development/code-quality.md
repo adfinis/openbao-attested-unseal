@@ -22,3 +22,21 @@ Run the local quality gate with:
 ```sh
 make ci-core
 ```
+
+Docker-backed OpenBao smoke tests are intentionally separate from `ci-core`.
+Run them explicitly when validating plugin lifecycle behavior against a real
+OpenBao image:
+
+```sh
+make test-e2e
+```
+
+The default E2E image is the current OpenBao 2.6.0 beta used by the local TPM
+smoke test. Override it when testing another build:
+
+```sh
+OPENBAO_E2E_IMAGE=openbao/openbao:2.6.0-beta20260622 make test-e2e
+```
+
+Set `OPENBAO_E2E_KEEP=1` to keep temporary Docker resources for debugging a
+failed run.
