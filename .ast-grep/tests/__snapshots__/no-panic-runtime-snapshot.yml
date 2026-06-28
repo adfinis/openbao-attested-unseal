@@ -1,0 +1,13 @@
+id: no-panic-runtime
+snapshots:
+  ? |
+    package p
+
+    func f() {
+      panic("boom")
+    }
+  : labels:
+    - source: panic("boom")
+      style: primary
+      start: 24
+      end: 37

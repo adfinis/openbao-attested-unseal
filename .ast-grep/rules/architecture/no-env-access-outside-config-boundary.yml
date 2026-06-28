@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ast-grep/ast-grep/main/schemas/rule.json
+
+id: no-env-access-outside-config-boundary
+message: Read environment only in config or command setup; runtime packages should receive typed config.
+severity: error
+language: Go
+files:
+  - internal/**/*.go
+ignores:
+  - internal/config/**/*.go
+  - '**/*_test.go'
+rule:
+  any:
+    - pattern:
+        context: func f() { _ = os.Getenv($KEY) }
+        selector: call_expression
+    - pattern:
+        context: func f() { _, _ = os.LookupEnv($KEY) }
+        selector: call_expression
+    - pattern:
+        context: func f() { _ = os.Environ() }
+        selector: call_expression
+note: Environment access outside config makes behavior harder to validate and test.

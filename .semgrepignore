@@ -1,0 +1,6 @@
+vendor/
+dist/
+bin/
+.git/
+.github/tools/node_modules/
+.ast-grep/tests/

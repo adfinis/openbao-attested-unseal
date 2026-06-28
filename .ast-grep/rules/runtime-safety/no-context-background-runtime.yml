@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ast-grep/ast-grep/main/schemas/rule.json
+
+id: no-context-background-runtime
+message: Do not create root contexts in runtime code; propagate caller context or use explicit process lifecycle context.
+severity: warning
+language: Go
+files:
+  - cmd/**/*.go
+  - internal/**/*.go
+ignores:
+  - '**/*_test.go'
+rule:
+  any:
+    - pattern: context.Background()
+    - pattern: context.TODO()
+note: KMS requests and OpenBao calls need cancellation and deadline propagation.

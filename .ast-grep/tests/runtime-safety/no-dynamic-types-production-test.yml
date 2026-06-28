@@ -1,0 +1,23 @@
+id: no-dynamic-types-production
+valid:
+  - |
+    package p
+
+    type TransitEncryptRequest struct {
+      Plaintext string
+    }
+
+    type Annotations map[string]string
+invalid:
+  - |
+    package p
+
+    type Payload map[string]any
+  - |
+    package p
+
+    var decoded interface{}
+  - |
+    package p
+
+    func decode(v any) {}

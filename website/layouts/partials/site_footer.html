@@ -1,0 +1,10 @@
+<footer class="site-footer">
+  <div class="site-footer__inner">
+    <p>{{ site.Params.footerBlurb | default (printf "%s documentation, published with Hugo." site.Title) }}</p>
+    <div class="site-footer__links">
+      {{ with site.Params.repoURL }}
+      <a href="{{ . }}">Source Repository</a>
+      {{ end }}
+    </div>
+  </div>
+</footer>

@@ -1,0 +1,138 @@
+{{ define "main" }}
+  <main class="home">
+    <section class="home-hero">
+      <div class="home-hero__inner">
+        <div class="home-hero__content">
+          <p class="section-label">{{ .Params.hero_label | default "Documentation" }}</p>
+          <h1>{{ .Title }}</h1>
+          <div class="home-hero__lead">
+            {{ .Content }}
+          </div>
+          <div class="home-hero__actions">
+            <a class="button button--primary" href="{{ relURL (strings.TrimPrefix "/" .Params.primary_href) }}">
+              {{ .Params.primary_label }}
+            </a>
+            <a class="button button--secondary" href="{{ relURL (strings.TrimPrefix "/" .Params.secondary_href) }}">
+              {{ .Params.secondary_label }}
+            </a>
+          </div>
+        </div>
+
+        <div class="home-hero__visual" aria-hidden="true">
+          <img
+            class="home-hero__mark"
+            src="{{ relURL (site.Params.heroMarkPath | default "brand/openbao-color.svg") }}"
+            alt=""
+          >
+        </div>
+      </div>
+    </section>
+
+    <section class="home-section">
+      <div class="home-section__header">
+        <p class="section-label">Workflow</p>
+        <h2>Read In The Order You Operate</h2>
+      </div>
+      <ol class="workflow-list">
+        <li>
+          <span class="workflow-list__step">01</span>
+          <div>
+            <h3><a href="{{ relURL "getting-started/overview/" }}">Check Fit</a></h3>
+            <p>Confirm that attested Auto Unseal is the right model for the cluster, and decide whether brokered mode, local TPM mode, or a hybrid profile matches the deployment boundary.</p>
+            <div class="workflow-list__links">
+              <a href="{{ relURL "getting-started/overview/" }}">Overview</a>
+              <a href="{{ relURL "security/threat-model/" }}">Threat Model</a>
+              <a href="{{ relURL "architecture/overview/" }}">Architecture</a>
+            </div>
+          </div>
+        </li>
+        <li>
+          <span class="workflow-list__step">02</span>
+          <div>
+            <h3><a href="{{ relURL "security/threat-model/" }}">Model Trust</a></h3>
+            <p>Name the trusted computing base for the target platform, including platform administrators, node administrators, attestation roots, and recovery custodians.</p>
+            <div class="workflow-list__links">
+              <a href="{{ relURL "security/threat-model/" }}">Threat Model</a>
+              <a href="{{ relURL "architecture/overview/" }}">Architecture Overview</a>
+              <a href="{{ relURL "development/code-quality/" }}">Code Quality</a>
+            </div>
+          </div>
+        </li>
+        <li>
+          <span class="workflow-list__step">03</span>
+          <div>
+            <h3><a href="{{ relURL "reference/cli/" }}">Build The Scaffold</a></h3>
+            <p>Build <code>bao-kms-unseal</code>, <code>bao-unseald</code>, and <code>bao-unsealctl</code>, then use the version output to confirm embedded build metadata.</p>
+            <div class="workflow-list__links">
+              <a href="{{ relURL "reference/cli/" }}">CLI</a>
+              <a href="{{ relURL "development/" }}">Development</a>
+              <a href="{{ relURL "getting-started/overview/" }}">Overview</a>
+            </div>
+          </div>
+        </li>
+        <li>
+          <span class="workflow-list__step">04</span>
+          <div>
+            <h3><a href="{{ relURL "development/code-quality/" }}">Keep Gates Strict</a></h3>
+            <p>Use the local quality gate before adding protocol code so attestation, key handling, and recovery logic stay typed, redacted, and testable.</p>
+            <div class="workflow-list__links">
+              <a href="{{ relURL "development/code-quality/" }}">Code Quality</a>
+              <a href="{{ relURL "reference/cli/" }}">CLI</a>
+              <a href="{{ relURL "security/" }}">Security</a>
+            </div>
+          </div>
+        </li>
+        <li>
+          <span class="workflow-list__step">05</span>
+          <div>
+            <h3><a href="{{ relURL "operations/" }}">Operate Safely</a></h3>
+            <p>Design enrollment, recovery enrollment, revocation, rotation, and broker outage behavior before production runtime code is added.</p>
+            <div class="workflow-list__links">
+              <a href="{{ relURL "operations/" }}">Operations</a>
+              <a href="{{ relURL "security/threat-model/" }}">Threat Model</a>
+              <a href="{{ relURL "architecture/overview/" }}">Architecture</a>
+            </div>
+          </div>
+        </li>
+      </ol>
+    </section>
+
+    <section class="home-section">
+      <div class="home-section__header">
+        <p class="section-label">Sections</p>
+        <h2>Documentation Map</h2>
+      </div>
+      <div class="home-directory">
+        {{ range site.Home.Sections.ByWeight }}
+          <a class="home-directory__item" href="{{ .RelPermalink }}">
+            <span class="home-directory__title">{{ partial "page_title.html" . }}</span>
+            {{ with partial "page_description.html" . }}
+              <span class="home-directory__summary">{{ . }}</span>
+            {{ end }}
+          </a>
+        {{ end }}
+      </div>
+    </section>
+
+    <section class="home-section home-section--accent">
+      <div class="home-section__header">
+        <p class="section-label">Reference</p>
+        <h2>Support, Security, And Internals</h2>
+      </div>
+      <div class="home-triad">
+        <a href="{{ relURL "reference/" }}">
+          <span>Reference</span>
+          <p>CLI behavior, future configuration shape, release policy, and operator-facing lookup material.</p>
+        </a>
+        <a href="{{ relURL "security/" }}">
+          <span>Security</span>
+          <p>Threat model, trust boundaries, recovery constraints, revocation limits, and platform attestation assumptions.</p>
+        </a>
+        <a href="{{ relURL "architecture/" }}">
+          <span>Architecture</span>
+          <p>Component model, brokered mode, local TPM mode, recovery enrollment, rotation invariants, and prior-art comparison.</p>
+        </a>
+      </div>
+    </section>
+  </main>
+{{ end }}

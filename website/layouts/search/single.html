@@ -1,0 +1,180 @@
+{{ define "main" }}
+  <section class="doc-page search-page">
+    <article class="doc-content prose">
+      {{ .Content }}
+    </article>
+
+    {{- $sections := slice "getting-started" "operations" "reference" "security" "architecture" "development" -}}
+    {{- $pages := where site.RegularPages "Section" "in" $sections -}}
+    {{- $index := slice -}}
+    {{- range $pages.ByTitle -}}
+      {{- $summary := default "" (partial "page_description.html" .) -}}
+      {{- $content := replaceRE "\\s+" " " .Plain -}}
+      {{- $index = $index | append (dict
+        "title" .Title
+        "section" .CurrentSection.Title
+        "url" .RelPermalink
+        "summary" $summary
+        "content" $content
+      ) -}}
+    {{- end -}}
+
+    <section class="search-panel" aria-labelledby="search-panel-title">
+      <div class="search-panel__header">
+        <p class="section-label">Search</p>
+        <h2 id="search-panel-title">Find A Page Fast</h2>
+      </div>
+
+      <form class="search-form" id="docs-search-form" role="search">
+        <label class="search-form__label" for="docs-search-query">Search the docs</label>
+        <div class="search-form__controls">
+          <input
+            id="docs-search-query"
+            class="search-form__input"
+            type="search"
+            name="q"
+            placeholder="Search commands, flags, recovery steps, trust settings..."
+            autocomplete="off"
+          >
+          <button class="button button--primary" type="submit">Search</button>
+        </div>
+        <p class="search-form__hint">Matches page titles, summaries, and page text across operator and contributor docs.</p>
+      </form>
+
+      <div id="search-results" class="search-results" aria-live="polite"></div>
+    </section>
+
+    {{- $searchIndex := $index | jsonify -}}
+    <script id="docs-search-index" type="application/json">{{ $searchIndex | safeJS }}</script>
+    <script>
+      (() => {
+        const indexNode = document.getElementById("docs-search-index");
+        const form = document.getElementById("docs-search-form");
+        const input = document.getElementById("docs-search-query");
+        const resultsNode = document.getElementById("search-results");
+
+        if (!indexNode || !form || !input || !resultsNode) {
+          return;
+        }
+
+        const parsedIndex = JSON.parse(indexNode.textContent);
+        const pages = Array.isArray(parsedIndex) ? parsedIndex : JSON.parse(parsedIndex);
+        const params = new URLSearchParams(window.location.search);
+        const initialQuery = (params.get("q") || "").trim();
+        input.value = initialQuery;
+
+        const emptyMessage = () => {
+          resultsNode.innerHTML = "";
+          const message = document.createElement("p");
+          message.className = "search-results__empty";
+          message.textContent = "Try \"rollback\", \"BAO_TOKEN\", \"container_ssh\", or \"prompt strategy\".";
+          resultsNode.appendChild(message);
+        };
+
+        const renderResults = (docs) => {
+          resultsNode.innerHTML = "";
+
+          if (docs.length === 0) {
+            const empty = document.createElement("p");
+            empty.className = "search-results__empty";
+            empty.textContent = "No docs matched that search.";
+            resultsNode.appendChild(empty);
+            return;
+          }
+
+          const list = document.createElement("ol");
+          list.className = "search-results__list";
+
+          docs.forEach((doc) => {
+            const item = document.createElement("li");
+            const link = document.createElement("a");
+            const meta = document.createElement("span");
+            const title = document.createElement("h3");
+            const summary = document.createElement("p");
+
+            link.className = "search-result";
+            link.href = doc.url;
+
+            meta.className = "search-result__meta";
+            meta.textContent = doc.section;
+
+            title.className = "search-result__title";
+            title.textContent = doc.title;
+
+            summary.className = "search-result__summary";
+            summary.textContent = doc.summary || "Open this page for the detailed answer.";
+
+            link.append(meta, title, summary);
+            item.appendChild(link);
+            list.appendChild(item);
+          });
+
+          resultsNode.appendChild(list);
+        };
+
+        const runSearch = (query) => {
+          const normalized = query.trim().toLowerCase();
+          if (!normalized) {
+            emptyMessage();
+            return;
+          }
+
+          const terms = normalized.split(/\s+/).filter(Boolean);
+          const matches = pages
+            .map((page) => {
+              const title = page.title.toLowerCase();
+              const section = (page.section || "").toLowerCase();
+              const summary = (page.summary || "").toLowerCase();
+              const content = (page.content || "").toLowerCase();
+              const haystack = `${title}\n${section}\n${summary}\n${content}`;
+
+              let score = 0;
+              for (const term of terms) {
+                if (!haystack.includes(term)) {
+                  return null;
+                }
+                if (title.includes(term)) {
+                  score += 8;
+                }
+                if (section.includes(term)) {
+                  score += 4;
+                }
+                if (summary.includes(term)) {
+                  score += 3;
+                }
+                if (content.includes(term)) {
+                  score += 1;
+                }
+              }
+
+              return { ...page, score };
+            })
+            .filter(Boolean)
+            .sort((left, right) => right.score - left.score || left.title.localeCompare(right.title))
+            .slice(0, 20);
+
+          renderResults(matches);
+        };
+
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          const query = input.value.trim();
+          const nextURL = new URL(window.location.href);
+          if (query) {
+            nextURL.searchParams.set("q", query);
+          } else {
+            nextURL.searchParams.delete("q");
+          }
+          window.history.replaceState({}, "", nextURL);
+          runSearch(query);
+        });
+
+        input.addEventListener("input", () => {
+          runSearch(input.value);
+        });
+
+        runSearch(initialQuery);
+      })();
+    </script>
+  </section>
+{{ end }}

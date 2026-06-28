@@ -1,0 +1,12 @@
+{{- $description := .Params.description -}}
+{{- if not $description -}}
+  {{- $summarySource := .RawContent -}}
+  {{- $summarySource = replaceRE `(?s)^---\s*\n.*?\n---\s*` "" $summarySource -}}
+  {{- $summarySource = replaceRE `(?s)^\+\+\+\s*\n.*?\n\+\+\+\s*` "" $summarySource -}}
+  {{- $summarySource = replaceRE `(?m)^#\s+.*$` "" $summarySource -}}
+  {{- $summary := $summarySource | markdownify | plainify | replaceRE `\s+` " " | strings.TrimSpace -}}
+  {{- if $summary -}}
+    {{- $description = truncate 180 $summary -}}
+  {{- end -}}
+{{- end -}}
+{{- return $description -}}

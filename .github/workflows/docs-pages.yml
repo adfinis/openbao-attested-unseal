@@ -1,0 +1,50 @@
+name: Docs Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: docs-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Docs
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Go
+        uses: ./.github/actions/setup-repo-tools
+        with:
+          bootstrap-tools: "false"
+
+      - name: Build docs
+        run: make docs-build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@0131db2e008051810f0b4e8e435ac3f6c70fd982 # v4.0.1
+        with:
+          path: public
+
+  deploy:
+    name: Deploy Docs
+    runs-on: ubuntu-24.04
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@fb659400307de99b56d2ee92e8d22356c8f67f9c # v4.0.5

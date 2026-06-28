@@ -1,0 +1,28 @@
+# Deny by default. The image build only needs module metadata, vendored
+# dependencies, and provider Go sources.
+**
+
+!go.mod
+!go.sum
+
+!vendor/
+!vendor/**
+
+!cmd/
+!cmd/**/
+!cmd/*.go
+!cmd/**/*.go
+
+!internal/
+!internal/**/
+!internal/*.go
+!internal/**/*.go
+
+!test/
+!test/e2e/
+!test/e2e/certauthsetup/
+!test/e2e/certauthsetup/*.go
+
+# Keep local artifacts out even when they sit below allowed source directories.
+**/.DS_Store
+**/artifacts/**

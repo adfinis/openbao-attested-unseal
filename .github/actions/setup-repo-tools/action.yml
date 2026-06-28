@@ -1,0 +1,50 @@
+name: Setup repo tools
+description: Set up Go, restore repo-local tools, and optionally bootstrap pinned tools.
+
+inputs:
+  go-version-file:
+    description: Path to the Go version file.
+    required: false
+    default: go.mod
+  check-latest:
+    description: Whether setup-go should check for latest patch releases.
+    required: false
+    default: "false"
+  cache-go:
+    description: Whether to enable Go module/build caching.
+    required: false
+    default: "true"
+  cache-tools:
+    description: Whether to restore/save the repo-local bin/ tool cache.
+    required: false
+    default: "true"
+  bootstrap-tools:
+    description: Whether to run make install-go-tools after cache restore.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+      with:
+        go-version-file: ${{ inputs.go-version-file }}
+        check-latest: ${{ inputs.check-latest }}
+        cache: ${{ inputs.cache-go }}
+
+    - name: Add repo-local tools to PATH
+      shell: bash
+      run: echo "${GITHUB_WORKSPACE}/bin" >> "${GITHUB_PATH}"
+
+    - name: Cache repo tools
+      if: inputs.cache-tools == 'true'
+      uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+      with:
+        path: bin/
+        key: ${{ runner.os }}-tools-${{ hashFiles('Makefile', 'mk/*.mk', 'go.mod') }}
+
+    - name: Bootstrap Go tools
+      if: inputs.bootstrap-tools == 'true'
+      shell: bash
+      run: make install-go-tools

@@ -1,0 +1,38 @@
+id: no-env-access-outside-config-boundary
+valid:
+  - |
+    package p
+
+    type Config struct {
+      Address string
+    }
+
+    func address(cfg Config) string {
+      return cfg.Address
+    }
+invalid:
+  - |
+    package p
+
+    import "os"
+
+    func address() string {
+      return os.Getenv("OPENBAO_ADDR")
+    }
+  - |
+    package p
+
+    import "os"
+
+    func hasToken() bool {
+      _, ok := os.LookupEnv("OPENBAO_TOKEN")
+      return ok
+    }
+  - |
+    package p
+
+    import "os"
+
+    func env() []string {
+      return os.Environ()
+    }

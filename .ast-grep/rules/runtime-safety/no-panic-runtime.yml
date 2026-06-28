@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ast-grep/ast-grep/main/schemas/rule.json
+
+id: no-panic-runtime
+message: Avoid panic in request-path and runtime code; return typed classified errors instead.
+severity: error
+language: Go
+files:
+  - cmd/**/*.go
+  - internal/**/*.go
+ignores:
+  - '**/*_test.go'
+rule:
+  pattern: panic($EXPR)
+note: Panics can terminate the unseal plugin or broker and block recovery.

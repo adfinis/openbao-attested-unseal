@@ -1,0 +1,27 @@
+rules:
+  - id: no-sensitive-log-fields-runtime
+    message: >-
+      Do not log sensitive unseal, KMS, attestation, or OpenBao fields. Use
+      redaction helpers and bounded hashes for correlation.
+    severity: ERROR
+    languages:
+      - go
+    paths:
+      include:
+        - /cmd/**/*.go
+        - /internal/**/*.go
+      exclude:
+        - '**/*_test.go'
+        - '**/testing_*.go'
+    patterns:
+      - pattern-either:
+          - pattern: $LOGGER.Debug(..., $FIELD, ...)
+          - pattern: $LOGGER.Info(..., $FIELD, ...)
+          - pattern: $LOGGER.Warn(..., $FIELD, ...)
+          - pattern: $LOGGER.Error(..., $FIELD, ...)
+          - pattern: $LOGGER.Log(..., $FIELD, ...)
+          - pattern: log.Printf($FIELD, ...)
+          - pattern: log.Println(..., $FIELD, ...)
+      - metavariable-regex:
+          metavariable: $FIELD
+          regex: '(?i)^"(token|jwt|plaintext|ciphertext|secret|password|authorization|associated_data|openbao_token|wrapping_key|recovery_share|attestation_evidence)"$'

@@ -1,0 +1,19 @@
+rules:
+  - id: no-http-client-without-timeout-runtime
+    message: >-
+      Runtime HTTP clients must set a timeout or use a documented transport
+      policy with request contexts. Avoid unbounded broker, OpenBao, or
+      attestation calls.
+    severity: WARNING
+    languages:
+      - go
+    paths:
+      include:
+        - /cmd/**/*.go
+        - /internal/**/*.go
+      exclude:
+        - '**/*_test.go'
+        - '**/testing_*.go'
+    patterns:
+      - pattern: '&http.Client{...}'
+      - pattern-not: '&http.Client{..., Timeout: $TIMEOUT, ...}'

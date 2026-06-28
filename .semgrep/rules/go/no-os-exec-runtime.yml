@@ -1,0 +1,18 @@
+rules:
+  - id: no-os-exec-runtime
+    message: >-
+      Runtime provider code should not spawn subprocesses. Keep external command
+      execution in build or repository tooling only.
+    severity: ERROR
+    languages:
+      - go
+    paths:
+      include:
+        - /cmd/**/*.go
+        - /internal/**/*.go
+      exclude:
+        - '**/*_test.go'
+        - '**/testing_*.go'
+    pattern-either:
+      - pattern: exec.Command(...)
+      - pattern: exec.CommandContext(...)

@@ -1,0 +1,18 @@
+rules:
+  - id: no-insecure-tls-skip-verify-runtime
+    message: >-
+      Do not disable TLS certificate verification for OpenBao or runtime HTTP
+      clients. Configure CA roots and server name validation instead.
+    severity: ERROR
+    languages:
+      - go
+    paths:
+      include:
+        - /cmd/**/*.go
+        - /internal/**/*.go
+      exclude:
+        - '**/*_test.go'
+        - '**/testing_*.go'
+    pattern-either:
+      - pattern: 'tls.Config{..., InsecureSkipVerify: true, ...}'
+      - pattern: '$CFG.InsecureSkipVerify = true'

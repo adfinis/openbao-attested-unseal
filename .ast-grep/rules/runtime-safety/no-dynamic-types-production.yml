@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ast-grep/ast-grep/main/schemas/rule.json
+
+id: no-dynamic-types-production
+message: Avoid broad dynamic Go types in production code; use typed structs or narrow boundary DTOs.
+severity: error
+language: Go
+files:
+  - cmd/**/*.go
+  - internal/**/*.go
+ignores:
+  - '**/*_test.go'
+rule:
+  any:
+    - pattern: 'map[string]any'
+    - pattern: 'map[string]interface{}'
+    - pattern: '[]any'
+    - pattern: '[]interface{}'
+    - pattern: 'var $X any'
+    - pattern: 'var $X interface{}'
+    - pattern: 'type $T any'
+    - pattern: 'type $T interface{}'
+    - pattern: 'func $F($P any) { $$$BODY }'
+    - pattern: 'func $F($P interface{}) { $$$BODY }'
+    - pattern: 'func $F($$$ARGS) any { $$$BODY }'
+    - pattern: 'func $F($$$ARGS) ($R any) { $$$BODY }'
+    - pattern: 'interface{}'
+note: Use typed DTOs and convert external data at package boundaries.

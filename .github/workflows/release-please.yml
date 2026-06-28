@@ -1,0 +1,34 @@
+name: Release Please PR
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      release_as:
+        description: "Optional semver override for the release PR, for example 0.1.0-rc.1"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: release-please-pr
+  cancel-in-progress: true
+
+jobs:
+  release-please:
+    name: Open or Update Release PR
+    runs-on: ubuntu-24.04
+    if: ${{ !github.event.repository.fork }}
+    steps:
+      - name: Run release-please
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          release-as: ${{ github.event_name == 'workflow_dispatch' && inputs.release_as || '' }}

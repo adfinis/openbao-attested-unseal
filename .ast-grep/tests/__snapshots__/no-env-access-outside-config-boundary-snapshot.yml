@@ -1,0 +1,42 @@
+id: no-env-access-outside-config-boundary
+snapshots:
+  ? |
+    package p
+
+    import "os"
+
+    func address() string {
+      return os.Getenv("OPENBAO_ADDR")
+    }
+  : labels:
+    - source: os.Getenv("OPENBAO_ADDR")
+      style: primary
+      start: 57
+      end: 82
+  ? |
+    package p
+
+    import "os"
+
+    func env() []string {
+      return os.Environ()
+    }
+  : labels:
+    - source: os.Environ()
+      style: primary
+      start: 55
+      end: 67
+  ? |
+    package p
+
+    import "os"
+
+    func hasToken() bool {
+      _, ok := os.LookupEnv("OPENBAO_TOKEN")
+      return ok
+    }
+  : labels:
+    - source: os.LookupEnv("OPENBAO_TOKEN")
+      style: primary
+      start: 58
+      end: 87

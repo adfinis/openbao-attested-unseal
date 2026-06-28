@@ -1,0 +1,31 @@
+{{- $pageTitle := partial "page_title.html" . -}}
+<!doctype html>
+<html lang="{{ site.Language.LanguageCode | default "en-us" }}">
+  <head>
+    {{ partial "site_head.html" . }}
+  </head>
+  <body class="page-kind-{{ .Kind }} section-{{ .Section }}{{ if .IsHome }} is-home{{ end }}">
+    <div class="site-frame">
+      {{ partial "site_header.html" . }}
+      {{ if .IsHome }}
+        {{ block "main" . }}{{ end }}
+      {{ else if or (eq .Layout "error") (eq .Type "error") }}
+        {{ block "main" . }}{{ end }}
+      {{ else }}
+        <main class="docs-shell" aria-label="{{ $pageTitle }}">
+          <aside class="docs-shell__sidebar">
+            {{ partial "site_nav.html" . }}
+          </aside>
+          <div class="docs-shell__main">
+            {{ block "main" . }}{{ end }}
+          </div>
+          <aside class="docs-shell__rail">
+            {{ partial "site_toc.html" . }}
+          </aside>
+        </main>
+      {{ end }}
+      {{ partial "site_footer.html" . }}
+    </div>
+    {{ partial "mermaid_script.html" . }}
+  </body>
+</html>

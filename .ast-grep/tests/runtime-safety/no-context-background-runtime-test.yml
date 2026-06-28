@@ -1,0 +1,19 @@
+id: no-context-background-runtime
+valid:
+  - |
+    package p
+
+    import "context"
+
+    func f(ctx context.Context) context.Context {
+      return ctx
+    }
+invalid:
+  - |
+    package p
+
+    import "context"
+
+    func f() context.Context {
+      return context.Background()
+    }

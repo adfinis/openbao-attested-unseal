@@ -1,0 +1,29 @@
+id: no-dynamic-types-production
+snapshots:
+  ? |
+    package p
+
+    func decode(v any) {}
+  : labels:
+    - source: func decode(v any) {}
+      style: primary
+      start: 11
+      end: 32
+  ? |
+    package p
+
+    type Payload map[string]any
+  : labels:
+    - source: map[string]any
+      style: primary
+      start: 24
+      end: 38
+  ? |
+    package p
+
+    var decoded interface{}
+  : labels:
+    - source: var decoded interface{}
+      style: primary
+      start: 11
+      end: 34

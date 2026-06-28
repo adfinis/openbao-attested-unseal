@@ -1,0 +1,15 @@
+id: no-viper-outside-config-boundary
+snapshots:
+  ? |
+    package p
+
+    import "github.com/spf13/viper"
+
+    func load() {
+      _ = viper.GetString("openbao.address")
+    }
+  : labels:
+    - source: import "github.com/spf13/viper"
+      style: primary
+      start: 11
+      end: 42

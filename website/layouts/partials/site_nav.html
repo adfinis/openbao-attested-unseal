@@ -1,0 +1,15 @@
+<nav class="docs-nav" aria-label="Documentation navigation">
+  <p class="docs-nav__label">Sections</p>
+  <ul class="docs-nav__root">
+    {{ range site.Home.Sections.ByWeight }}
+      {{- $isCurrent := eq $.RelPermalink .RelPermalink -}}
+      {{- $isAncestor := and (not $isCurrent) (hasPrefix $.RelPermalink .RelPermalink) -}}
+      <li class="docs-nav__root-item{{ if $isCurrent }} is-current{{ end }}{{ if $isAncestor }} is-ancestor{{ end }}">
+        <a class="docs-nav__link docs-nav__link--section" href="{{ .RelPermalink }}"{{ if $isCurrent }} aria-current="page"{{ end }}>
+          {{ partial "page_title.html" . }}
+        </a>
+        {{ partial "site_nav_tree.html" (dict "node" . "current" $ "depth" 1) }}
+      </li>
+    {{ end }}
+  </ul>
+</nav>

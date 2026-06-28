@@ -1,0 +1,3 @@
+# Static-pod deployments intentionally share host networking so kube-apiserver
+# can reach the local KMS endpoint during control-plane bootstrap.
+KSV-0009

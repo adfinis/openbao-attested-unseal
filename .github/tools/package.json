@@ -1,0 +1,8 @@
+{
+  "name": "openbao-attested-unseal-ci-tools",
+  "private": true,
+  "description": "Pinned CI tooling for OpenBao attested unseal workflows.",
+  "devDependencies": {
+    "@ast-grep/cli": "0.42.2"
+  }
+}

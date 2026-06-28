@@ -1,0 +1,15 @@
+id: no-context-background-runtime
+snapshots:
+  ? |
+    package p
+
+    import "context"
+
+    func f() context.Context {
+      return context.Background()
+    }
+  : labels:
+    - source: context.Background()
+      style: primary
+      start: 65
+      end: 85

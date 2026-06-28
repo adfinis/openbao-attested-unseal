@@ -1,0 +1,68 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+  allow-parallel-runners: true
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - copyloopvar
+    - dupl
+    - errcheck
+    - forbidigo
+    - goconst
+    - gocyclo
+    - gosec
+    - govet
+    - ineffassign
+    - lll
+    - misspell
+    - nakedret
+    - prealloc
+    - revive
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+
+  settings:
+    dupl:
+      threshold: 120
+    forbidigo:
+      forbid:
+        - pattern: 'map\[string\]any'
+          msg: use a typed struct or a narrow boundary DTO
+        - pattern: 'map\[string\]interface\{\}'
+          msg: use a typed struct or a narrow boundary DTO
+        - pattern: '\bany\b'
+          msg: broad any is not allowed in production code without a reviewed boundary adapter
+        - pattern: 'interface\{\}'
+          msg: broad interface{} is not allowed in production code without a reviewed boundary adapter
+    gocyclo:
+      min-complexity: 15
+    lll:
+      line-length: 120
+      tab-width: 1
+    nakedret:
+      max-func-lines: 0
+    revive:
+      rules:
+        - name: comment-spacings
+        - name: import-shadowing
+
+  exclusions:
+    generated: lax
+    rules:
+      - path: '(.+)_test\.go'
+        linters:
+          - forbidigo
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax

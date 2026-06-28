@@ -1,0 +1,17 @@
+id: no-viper-outside-config-boundary
+valid:
+  - |
+    package p
+
+    import "github.com/dc-tec/openbao-kubernetes-kms/internal/config"
+
+    func use(cfg config.Config) {}
+invalid:
+  - |
+    package p
+
+    import "github.com/spf13/viper"
+
+    func load() {
+      _ = viper.GetString("openbao.address")
+    }

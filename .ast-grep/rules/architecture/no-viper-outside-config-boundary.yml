@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ast-grep/ast-grep/main/schemas/rule.json
+
+id: no-viper-outside-config-boundary
+message: Keep Viper at the CLI/config boundary; runtime packages should receive typed config structs.
+severity: error
+language: Go
+files:
+  - internal/**/*.go
+ignores:
+  - internal/config/**/*.go
+  - '**/*_test.go'
+rule:
+  pattern: import "github.com/spf13/viper"
+note: Viper must not leak into business logic, protocol, Transit, AAD, registry, or socket packages.
