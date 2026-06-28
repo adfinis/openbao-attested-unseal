@@ -1,0 +1,157 @@
+syntax = "proto3";
+
+package openbao.attestedunseal.v1;
+
+option go_package = "github.com/dc-tec/openbao-attested-unseal/internal/protocol/v1;protocolv1";
+
+service UnsealBrokerService {
+  rpc Challenge(ChallengeRequest) returns (ChallengeResponse);
+  rpc Wrap(WrapRequest) returns (WrapResponse);
+  rpc Unwrap(UnwrapRequest) returns (UnwrapResponse);
+  rpc Status(StatusRequest) returns (StatusResponse);
+}
+
+enum Operation {
+  OPERATION_UNSPECIFIED = 0;
+  OPERATION_WRAP = 1;
+  OPERATION_UNWRAP = 2;
+  OPERATION_ENROLL = 3;
+  OPERATION_ROTATE = 4;
+  OPERATION_RECOVER = 5;
+}
+
+enum AttestationProvider {
+  ATTESTATION_PROVIDER_UNSPECIFIED = 0;
+  ATTESTATION_PROVIDER_TPM2_QUOTE = 1;
+  ATTESTATION_PROVIDER_KUBERNETES_WORKLOAD = 2;
+}
+
+enum PolicyDecisionState {
+  POLICY_DECISION_STATE_UNSPECIFIED = 0;
+  POLICY_DECISION_STATE_ALLOW = 1;
+  POLICY_DECISION_STATE_DENY = 2;
+}
+
+enum KeyStatus {
+  KEY_STATUS_UNSPECIFIED = 0;
+  KEY_STATUS_PENDING = 1;
+  KEY_STATUS_ACTIVE = 2;
+  KEY_STATUS_DECRYPT_ONLY = 3;
+  KEY_STATUS_RETIRED = 4;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_INVALID_REQUEST = 1;
+  ERROR_CODE_UNAUTHENTICATED = 2;
+  ERROR_CODE_PERMISSION_DENIED = 3;
+  ERROR_CODE_KEY_NOT_FOUND = 4;
+  ERROR_CODE_KEY_NOT_USABLE = 5;
+  ERROR_CODE_ATTESTATION_FAILED = 6;
+  ERROR_CODE_BROKER_UNAVAILABLE = 7;
+  ERROR_CODE_INTERNAL = 8;
+}
+
+message AuditContext {
+  string correlation_id = 1;
+  string request_id = 2;
+}
+
+message KeyRef {
+  string cluster_id = 1;
+  string key_id = 2;
+  uint32 version = 3;
+}
+
+message KeyVersion {
+  KeyRef ref = 1;
+  KeyStatus status = 2;
+  string algorithm = 3;
+  string policy_id = 4;
+}
+
+message BrokerError {
+  ErrorCode code = 1;
+  string message = 2;
+}
+
+message ChallengeRequest {
+  string cluster_id = 1;
+  string node_id = 2;
+  Operation operation = 3;
+  AuditContext audit = 4;
+}
+
+message ChallengeResponse {
+  string challenge_id = 1;
+  bytes nonce = 2;
+  int64 expires_unix_seconds = 3;
+}
+
+message Claim {
+  string namespace = 1;
+  string name = 2;
+  string value = 3;
+}
+
+message ClaimsEnvelope {
+  repeated Claim claims = 1;
+}
+
+message EvidenceEnvelope {
+  AttestationProvider provider = 1;
+  string format = 2;
+  bytes payload = 3;
+  string challenge_id = 4;
+  repeated Claim normalized_claims = 5;
+}
+
+message PolicyDecision {
+  PolicyDecisionState state = 1;
+  string policy_id = 2;
+  repeated BrokerError errors = 3;
+}
+
+message WrappedBlob {
+  bytes ciphertext = 1;
+  bytes iv = 2;
+  KeyRef key = 3;
+  uint64 mechanism = 4;
+}
+
+message WrapRequest {
+  KeyRef requested_key = 1;
+  bytes plaintext = 2;
+  bytes aad = 3;
+  EvidenceEnvelope evidence = 4;
+  AuditContext audit = 5;
+}
+
+message WrapResponse {
+  WrappedBlob blob = 1;
+  PolicyDecision decision = 2;
+}
+
+message UnwrapRequest {
+  WrappedBlob blob = 1;
+  bytes aad = 2;
+  EvidenceEnvelope evidence = 3;
+  AuditContext audit = 4;
+}
+
+message UnwrapResponse {
+  bytes plaintext = 1;
+  PolicyDecision decision = 2;
+}
+
+message StatusRequest {
+  string cluster_id = 1;
+  AuditContext audit = 2;
+}
+
+message StatusResponse {
+  repeated KeyVersion keys = 1;
+  string active_key_id = 2;
+  bool ready = 3;
+  repeated BrokerError errors = 4;
+}

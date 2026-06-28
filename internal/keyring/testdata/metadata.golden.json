@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "purpose": "openbao-auto-unseal",
+  "cluster_id": "prod-eu1",
+  "key_id": "root",
+  "key_version": 1,
+  "algorithm": "AES-256-GCM",
+  "policy_id": "secureboot",
+  "blob_format": "openbao-attested-unseal.v1.aes256gcm"
+}

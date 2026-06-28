@@ -7,10 +7,16 @@ import (
 
 	"github.com/dc-tec/openbao-attested-unseal/internal/cli"
 	"github.com/dc-tec/openbao-attested-unseal/internal/command"
+	"github.com/dc-tec/openbao-attested-unseal/internal/kmsplugin"
 	"github.com/dc-tec/openbao-attested-unseal/internal/version"
 )
 
 func main() {
+	if kmsplugin.ShouldServePlugin() {
+		kmsplugin.ServePlugin()
+		return
+	}
+
 	err := command.Execute(
 		command.Metadata{
 			Name:    "bao-kms-unseal",

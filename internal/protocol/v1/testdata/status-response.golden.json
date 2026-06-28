@@ -1,0 +1,10 @@
+{
+  "activeKeyId": "prod-eu1/root/v1",
+  "ready": true,
+  "errors": [
+    {
+      "code": "ERROR_CODE_KEY_NOT_USABLE",
+      "message": "key is decrypt-only"
+    }
+  ]
+}

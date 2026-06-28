@@ -1,0 +1,12 @@
+version: v2
+plugins:
+  - local: bin/protoc-gen-go
+    out: .
+    opt:
+      - paths=import
+      - module=github.com/dc-tec/openbao-attested-unseal
+  - local: bin/protoc-gen-go-grpc
+    out: .
+    opt:
+      - paths=import
+      - module=github.com/dc-tec/openbao-attested-unseal
