@@ -44,6 +44,38 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, SchemaSQL()); err != nil {
 		return fmt.Errorf("migrate sqlite state: %w", err)
 	}
+	if err := s.ensureColumn(ctx, "clusters", "recovery_package_id", "TEXT"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SQLiteStore) ensureColumn(ctx context.Context, table string, column string, definition string) error {
+	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return fmt.Errorf("inspect sqlite table %s: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var primaryKey int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return fmt.Errorf("scan sqlite table %s columns: %w", table, err)
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate sqlite table %s columns: %w", table, err)
+	}
+	if _, err := s.db.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+column+" "+definition); err != nil {
+		return fmt.Errorf("add sqlite column %s.%s: %w", table, column, err)
+	}
 	return nil
 }
 
@@ -59,6 +91,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 CREATE TABLE IF NOT EXISTS clusters (
   cluster_id TEXT PRIMARY KEY,
+  recovery_package_id TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -99,6 +132,17 @@ CREATE TABLE IF NOT EXISTS subjects (
   FOREIGN KEY (cluster_id) REFERENCES clusters(cluster_id)
 );
 
+CREATE TABLE IF NOT EXISTS subject_claims (
+  cluster_id TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  namespace TEXT NOT NULL,
+  name TEXT NOT NULL,
+  value TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (cluster_id, subject_id, namespace, name),
+  FOREIGN KEY (cluster_id, subject_id) REFERENCES subjects(cluster_id, subject_id)
+);
+
 CREATE TABLE IF NOT EXISTS policies (
   cluster_id TEXT NOT NULL,
   policy_id TEXT NOT NULL,
@@ -120,6 +164,41 @@ CREATE TABLE IF NOT EXISTS challenges (
   FOREIGN KEY (cluster_id) REFERENCES clusters(cluster_id)
 );
 
+CREATE TABLE IF NOT EXISTS recovery_packages (
+  package_id TEXT PRIMARY KEY,
+  cluster_id TEXT NOT NULL,
+  key_id TEXT NOT NULL,
+  threshold_count INTEGER NOT NULL,
+  shares_count INTEGER NOT NULL,
+  checksum TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (cluster_id, key_id) REFERENCES keyrings(cluster_id, key_id)
+);
+
+CREATE TABLE IF NOT EXISTS enrollment_requests (
+  request_id TEXT PRIMARY KEY,
+  cluster_id TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  body TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (cluster_id) REFERENCES clusters(cluster_id)
+);
+
+CREATE TABLE IF NOT EXISTS enrollment_grants (
+  grant_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL,
+  cluster_id TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  body TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (request_id) REFERENCES enrollment_requests(request_id),
+  FOREIGN KEY (cluster_id) REFERENCES clusters(cluster_id)
+);
+
 CREATE TABLE IF NOT EXISTS audit_events (
   audit_id TEXT PRIMARY KEY,
   occurred_at TEXT NOT NULL,
@@ -138,7 +217,86 @@ CREATE TABLE IF NOT EXISTS audit_events (
 
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
+}
+
+// BootstrapKeyring seeds a fresh broker keyring and optional recovery metadata.
+func (s *SQLiteStore) BootstrapKeyring(ctx context.Context, request BootstrapKeyringRequest) error {
+	now := request.CreatedAt.UTC().Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin keyring bootstrap transaction: %w", err)
+	}
+	defer rollbackUnlessCommitted(tx)
+
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO clusters(cluster_id, recovery_package_id, created_at) VALUES (?, ?, ?)`,
+		request.ClusterID,
+		nullableString(request.RecoveryPackageID),
+		now,
+	); err != nil {
+		return fmt.Errorf("insert cluster: %w", err)
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO keyrings(cluster_id, key_id, profile, created_at) VALUES (?, ?, ?, ?)`,
+		request.ClusterID,
+		request.KeyID,
+		request.Profile,
+		now,
+	); err != nil {
+		return fmt.Errorf("insert keyring: %w", err)
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO key_versions(cluster_id, key_id, version, status, algorithm, policy_id, material, created_at)
+		 VALUES (?, ?, 1, ?, ?, ?, ?, ?)`,
+		request.ClusterID,
+		request.KeyID,
+		string(keyring.StatusActive),
+		string(keyring.AlgorithmAES256GCM),
+		request.PolicyID,
+		request.Material,
+		now,
+	); err != nil {
+		return fmt.Errorf("insert key version: %w", err)
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO policies(cluster_id, policy_id, body, created_at) VALUES (?, ?, ?, ?)`,
+		request.ClusterID,
+		request.PolicyID,
+		"default-deny-with-enrolled-subjects",
+		now,
+	); err != nil {
+		return fmt.Errorf("insert policy: %w", err)
+	}
+	if request.RecoveryPackageID != "" {
+		if _, err := tx.ExecContext(
+			ctx,
+			`INSERT INTO recovery_packages(package_id, cluster_id, key_id, threshold_count, shares_count,
+			 checksum, body, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			request.RecoveryPackageID,
+			request.ClusterID,
+			request.KeyID,
+			request.RecoveryThreshold,
+			request.RecoveryShares,
+			request.RecoveryChecksum,
+			request.RecoveryMetadataJSON,
+			now,
+		); err != nil {
+			return fmt.Errorf("insert recovery package: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit keyring bootstrap transaction: %w", err)
+	}
+	return nil
 }
 
 // ConfigureDevelopment seeds the explicit development subject and keyring.
@@ -294,6 +452,21 @@ func (s *SQLiteStore) Subject(ctx context.Context, clusterID string, subject str
 	return Subject{ClusterID: clusterID, Subject: subject}, nil
 }
 
+// InsertSubject records an allowed broker subject.
+func (s *SQLiteStore) InsertSubject(ctx context.Context, clusterID string, subject string, now time.Time) error {
+	_, err := s.db.ExecContext(
+		ctx,
+		`INSERT OR IGNORE INTO subjects(cluster_id, subject_id, revoked, created_at) VALUES (?, ?, 0, ?)`,
+		clusterID,
+		subject,
+		now.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("insert subject: %w", err)
+	}
+	return nil
+}
+
 // RevokeSubject marks one subject revoked.
 func (s *SQLiteStore) RevokeSubject(ctx context.Context, clusterID string, subject string) error {
 	result, err := s.db.ExecContext(
@@ -312,6 +485,111 @@ func (s *SQLiteStore) RevokeSubject(ctx context.Context, clusterID string, subje
 	}
 	if affected == 0 {
 		return ErrSubjectNotFound
+	}
+	return nil
+}
+
+// InsertRecoveryPackage stores non-secret recovery metadata.
+func (s *SQLiteStore) InsertRecoveryPackage(ctx context.Context, record RecoveryPackageRecord) error {
+	_, err := s.db.ExecContext(
+		ctx,
+		`INSERT OR IGNORE INTO recovery_packages(package_id, cluster_id, key_id, threshold_count, shares_count,
+		 checksum, body, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		record.PackageID,
+		record.ClusterID,
+		record.KeyID,
+		record.Threshold,
+		record.Shares,
+		record.Checksum,
+		record.Body,
+		record.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("insert recovery package: %w", err)
+	}
+	return nil
+}
+
+// InsertEnrollmentRequest stores an enrollment request.
+func (s *SQLiteStore) InsertEnrollmentRequest(ctx context.Context, record EnrollmentRequestRecord) error {
+	_, err := s.db.ExecContext(
+		ctx,
+		`INSERT OR REPLACE INTO enrollment_requests(request_id, cluster_id, subject_id, body, expires_at, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		record.RequestID,
+		record.ClusterID,
+		record.Subject,
+		record.Body,
+		record.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		record.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("insert enrollment request: %w", err)
+	}
+	return nil
+}
+
+// InsertEnrollmentGrant stores an enrollment grant.
+func (s *SQLiteStore) InsertEnrollmentGrant(ctx context.Context, record EnrollmentGrantRecord) error {
+	_, err := s.db.ExecContext(
+		ctx,
+		`INSERT INTO enrollment_grants(grant_id, request_id, cluster_id, subject_id, body, expires_at, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		record.GrantID,
+		record.RequestID,
+		record.ClusterID,
+		record.Subject,
+		record.Body,
+		record.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		record.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("insert enrollment grant: %w", err)
+	}
+	return nil
+}
+
+// ConsumeEnrollmentGrant marks a one-time enrollment grant consumed.
+func (s *SQLiteStore) ConsumeEnrollmentGrant(ctx context.Context, grantID string, now time.Time) error {
+	var expiresRaw string
+	var consumed sql.NullString
+	err := s.db.QueryRowContext(
+		ctx,
+		`SELECT expires_at, consumed_at FROM enrollment_grants WHERE grant_id = ?`,
+		grantID,
+	).Scan(&expiresRaw, &consumed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: enrollment grant not found", ErrChallengeNotFound)
+	}
+	if err != nil {
+		return fmt.Errorf("query enrollment grant: %w", err)
+	}
+	if consumed.Valid {
+		return ErrChallengeReplayed
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, expiresRaw)
+	if err != nil {
+		return fmt.Errorf("parse enrollment grant expiry: %w", err)
+	}
+	if !now.Before(expiresAt) {
+		return ErrChallengeExpired
+	}
+	result, err := s.db.ExecContext(
+		ctx,
+		`UPDATE enrollment_grants SET consumed_at = ? WHERE grant_id = ? AND consumed_at IS NULL`,
+		now.UTC().Format(time.RFC3339Nano),
+		grantID,
+	)
+	if err != nil {
+		return fmt.Errorf("consume enrollment grant: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read enrollment grant consume result: %w", err)
+	}
+	if affected == 0 {
+		return ErrChallengeReplayed
 	}
 	return nil
 }
@@ -476,4 +754,8 @@ func (s *SQLiteStore) AuditEvents(ctx context.Context) ([]AuditEvent, error) {
 
 func rollbackUnlessCommitted(tx *sql.Tx) {
 	_ = tx.Rollback()
+}
+
+func nullableString(value string) sql.NullString {
+	return sql.NullString{String: value, Valid: value != ""}
 }

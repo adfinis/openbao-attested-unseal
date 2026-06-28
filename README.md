@@ -3,9 +3,9 @@
 `openbao-attested-unseal` is an early-stage project for OpenBao Auto Unseal
 using attested node or workload identity, with TPM as one backend.
 
-The project is currently design-first. The initial scaffold provides the binary
-layout, quality gates, release skeleton, and documentation structure before the
-unseal protocol is implemented.
+The project is currently pre-production. It has the initial protocol, local
+keyring crypto, broker skeleton, and operator lifecycle CLI, while real TPM and
+Kubernetes attestation providers are still under development.
 
 ## Binaries
 
@@ -32,6 +32,6 @@ documentation uses the Hugo site scaffold under `website/`.
 
 ## Status
 
-This repository is not ready for production use. Runtime unseal behavior,
-attestation verification, broker policy, recovery, and rotation are not yet
-implemented.
+This repository is not ready for production use. Runtime TPM/Kubernetes
+attestation verification, production broker policy, rotation, and platform
+provider hardening are not yet implemented.

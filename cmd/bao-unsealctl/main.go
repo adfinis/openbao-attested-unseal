@@ -5,17 +5,13 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/dc-tec/openbao-attested-unseal/internal/baounsealctl"
 	"github.com/dc-tec/openbao-attested-unseal/internal/cli"
-	"github.com/dc-tec/openbao-attested-unseal/internal/command"
 	"github.com/dc-tec/openbao-attested-unseal/internal/version"
 )
 
 func main() {
-	err := command.Execute(
-		command.Metadata{
-			Name:    "bao-unsealctl",
-			Summary: "Operator CLI for OpenBao attested unseal lifecycle tasks.",
-		},
+	err := baounsealctl.Execute(
 		version.BuildInfo(),
 		os.Args[1:],
 		os.Stdout,

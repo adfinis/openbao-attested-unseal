@@ -42,14 +42,68 @@ type Subject struct {
 	Revoked   bool
 }
 
+// BootstrapKeyringRequest seeds a fresh broker keyring.
+type BootstrapKeyringRequest struct {
+	ClusterID            string
+	KeyID                string
+	Profile              string
+	PolicyID             string
+	Material             []byte
+	RecoveryPackageID    string
+	RecoveryThreshold    int
+	RecoveryShares       int
+	RecoveryChecksum     string
+	RecoveryMetadataJSON string
+	CreatedAt            time.Time
+}
+
+// RecoveryPackageRecord stores non-secret recovery metadata.
+type RecoveryPackageRecord struct {
+	PackageID string
+	ClusterID string
+	KeyID     string
+	Threshold int
+	Shares    int
+	Checksum  string
+	Body      string
+	CreatedAt time.Time
+}
+
+// EnrollmentRequestRecord stores an enrollment request body.
+type EnrollmentRequestRecord struct {
+	RequestID string
+	ClusterID string
+	Subject   string
+	Body      string
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
+
+// EnrollmentGrantRecord stores a one-time enrollment grant body.
+type EnrollmentGrantRecord struct {
+	GrantID   string
+	RequestID string
+	ClusterID string
+	Subject   string
+	Body      string
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
+
 // Store persists broker state.
 type Store interface {
 	Close() error
+	BootstrapKeyring(ctx context.Context, request BootstrapKeyringRequest) error
 	ConfigureDevelopment(ctx context.Context, config Config, key []byte) error
 	LoadKeyring(ctx context.Context, clusterID string) (*keyring.Ring, error)
 	KeyVersion(ctx context.Context, ref keyring.KeyRef) (keyring.KeyVersion, error)
 	Subject(ctx context.Context, clusterID string, subject string) (Subject, error)
+	InsertSubject(ctx context.Context, clusterID string, subject string, now time.Time) error
 	RevokeSubject(ctx context.Context, clusterID string, subject string) error
+	InsertRecoveryPackage(ctx context.Context, record RecoveryPackageRecord) error
+	InsertEnrollmentRequest(ctx context.Context, record EnrollmentRequestRecord) error
+	InsertEnrollmentGrant(ctx context.Context, record EnrollmentGrantRecord) error
+	ConsumeEnrollmentGrant(ctx context.Context, grantID string, now time.Time) error
 	CreateChallenge(ctx context.Context, challenge Challenge) error
 	ConsumeChallenge(
 		ctx context.Context,

@@ -1,15 +1,42 @@
 ---
 title: "CLI"
-description: "Command binary names and current scaffold behavior."
+description: "Command binary names and current behavior."
 weight: 10
 ---
 
 # CLI
 
-The scaffold currently supports `help` and `version` for each binary:
+All binaries support `help` and `version`:
 
 ```sh
 bao-kms-unseal version
 bao-unseald version
 bao-unsealctl version
 ```
+
+`bao-unseald` also supports broker startup and local diagnostics:
+
+```sh
+bao-unseald serve -config broker.json
+bao-unseald config validate -config broker.json
+bao-unseald debug schema
+```
+
+`bao-unsealctl` supports the local lifecycle flow:
+
+```sh
+bao-unsealctl init -state broker.db
+bao-unsealctl status -state broker.db
+
+bao-unsealctl enroll request -subject-id node-a -out request.json
+bao-unsealctl enroll issue -state broker.db -request request.json -grant grant.json
+bao-unsealctl enroll apply -state broker.db -grant grant.json
+
+bao-unsealctl recover begin -package recovery.json -shares-file shares.json
+bao-unsealctl enroll request -subject-id recovered-broker -out target-request.json
+bao-unsealctl recover enroll -state broker.db -package recovery.json \
+  -shares-file shares.json -session recovery.json.session -request target-request.json
+bao-unsealctl recover finish -session recovery.json.session
+```
+
+Use `--format json` on lifecycle commands for automation.

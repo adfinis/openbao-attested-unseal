@@ -508,35 +508,35 @@ func auditIDFromRequest(audit *protocolv1.AuditContext) string {
 	return audit.GetRequestId()
 }
 
-// EnrollmentStub defines but does not implement the M3 enrollment service.
+// EnrollmentStub reports M3 enrollment availability.
 type EnrollmentStub struct {
 	protocolv1.UnimplementedEnrollmentServiceServer
 }
 
-// Status reports that enrollment is intentionally not implemented in M2.
+// Status reports that brokered enrollment is available through bao-unsealctl.
 func (EnrollmentStub) Status(
 	context.Context,
 	*protocolv1.EnrollmentStatusRequest,
 ) (*protocolv1.EnrollmentStatusResponse, error) {
 	return &protocolv1.EnrollmentStatusResponse{
-		Implemented: false,
-		Message:     "enrollment is not implemented in milestone 2",
+		Implemented: true,
+		Message:     "brokered enrollment is available through bao-unsealctl",
 	}, nil
 }
 
-// RecoveryStub defines but does not implement the M3 recovery service.
+// RecoveryStub reports M3 recovery availability.
 type RecoveryStub struct {
 	protocolv1.UnimplementedRecoveryServiceServer
 }
 
-// Status reports that recovery is intentionally not implemented in M2.
+// Status reports that recovery enrollment is available through bao-unsealctl.
 func (RecoveryStub) Status(
 	context.Context,
 	*protocolv1.RecoveryStatusRequest,
 ) (*protocolv1.RecoveryStatusResponse, error) {
 	return &protocolv1.RecoveryStatusResponse{
-		Implemented: false,
-		Message:     "recovery is not implemented in milestone 2",
+		Implemented: true,
+		Message:     "recovery enrollment is available through bao-unsealctl",
 	}, nil
 }
 
