@@ -2,6 +2,7 @@ package protocolv1
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -55,13 +56,11 @@ func TestStatusResponseJSONGolden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal returned error: %v", err)
 	}
-	got = append(got, '\n')
-
 	want, err := os.ReadFile(filepath.Join("testdata", "status-response.golden.json"))
 	if err != nil {
 		t.Fatalf("ReadFile returned error: %v", err)
 	}
-	if !bytes.Equal(got, want) {
+	if !sameJSON(got, want) {
 		t.Fatalf("status-response.golden.json mismatch\nwant:\n%s\ngot:\n%s", want, got)
 	}
 }
@@ -97,4 +96,16 @@ func TestUnmarshalBoundedAcceptsValidPayload(t *testing.T) {
 	if got.GetActiveKeyId() != want.GetActiveKeyId() || got.GetReady() != want.GetReady() {
 		t.Fatalf("decoded response = %#v, want %#v", &got, want)
 	}
+}
+
+func sameJSON(left []byte, right []byte) bool {
+	var compactLeft bytes.Buffer
+	var compactRight bytes.Buffer
+	if err := json.Compact(&compactLeft, left); err != nil {
+		return false
+	}
+	if err := json.Compact(&compactRight, right); err != nil {
+		return false
+	}
+	return bytes.Equal(compactLeft.Bytes(), compactRight.Bytes())
 }

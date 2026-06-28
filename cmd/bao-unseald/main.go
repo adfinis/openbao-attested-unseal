@@ -5,17 +5,13 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/dc-tec/openbao-attested-unseal/internal/baounseald"
 	"github.com/dc-tec/openbao-attested-unseal/internal/cli"
-	"github.com/dc-tec/openbao-attested-unseal/internal/command"
 	"github.com/dc-tec/openbao-attested-unseal/internal/version"
 )
 
 func main() {
-	err := command.Execute(
-		command.Metadata{
-			Name:    "bao-unseald",
-			Summary: "Internal-network attested unseal broker daemon.",
-		},
+	err := baounseald.Execute(
 		version.BuildInfo(),
 		os.Args[1:],
 		os.Stdout,

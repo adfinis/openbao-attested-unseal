@@ -4,11 +4,23 @@ package openbao.attestedunseal.v1;
 
 option go_package = "github.com/dc-tec/openbao-attested-unseal/internal/protocol/v1;protocolv1";
 
-service UnsealBrokerService {
+service UnsealService {
   rpc Challenge(ChallengeRequest) returns (ChallengeResponse);
   rpc Wrap(WrapRequest) returns (WrapResponse);
   rpc Unwrap(UnwrapRequest) returns (UnwrapResponse);
   rpc Status(StatusRequest) returns (StatusResponse);
+}
+
+service EnrollmentService {
+  rpc Status(EnrollmentStatusRequest) returns (EnrollmentStatusResponse);
+}
+
+service RecoveryService {
+  rpc Status(RecoveryStatusRequest) returns (RecoveryStatusResponse);
+}
+
+service AdminService {
+  rpc Status(AdminStatusRequest) returns (AdminStatusResponse);
 }
 
 enum Operation {
@@ -154,4 +166,31 @@ message StatusResponse {
   string active_key_id = 2;
   bool ready = 3;
   repeated BrokerError errors = 4;
+}
+
+message EnrollmentStatusRequest {
+  AuditContext audit = 1;
+}
+
+message EnrollmentStatusResponse {
+  bool implemented = 1;
+  string message = 2;
+}
+
+message RecoveryStatusRequest {
+  AuditContext audit = 1;
+}
+
+message RecoveryStatusResponse {
+  bool implemented = 1;
+  string message = 2;
+}
+
+message AdminStatusRequest {
+  AuditContext audit = 1;
+}
+
+message AdminStatusResponse {
+  bool implemented = 1;
+  string message = 2;
 }

@@ -19,215 +19,521 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	UnsealBrokerService_Challenge_FullMethodName = "/openbao.attestedunseal.v1.UnsealBrokerService/Challenge"
-	UnsealBrokerService_Wrap_FullMethodName      = "/openbao.attestedunseal.v1.UnsealBrokerService/Wrap"
-	UnsealBrokerService_Unwrap_FullMethodName    = "/openbao.attestedunseal.v1.UnsealBrokerService/Unwrap"
-	UnsealBrokerService_Status_FullMethodName    = "/openbao.attestedunseal.v1.UnsealBrokerService/Status"
+	UnsealService_Challenge_FullMethodName = "/openbao.attestedunseal.v1.UnsealService/Challenge"
+	UnsealService_Wrap_FullMethodName      = "/openbao.attestedunseal.v1.UnsealService/Wrap"
+	UnsealService_Unwrap_FullMethodName    = "/openbao.attestedunseal.v1.UnsealService/Unwrap"
+	UnsealService_Status_FullMethodName    = "/openbao.attestedunseal.v1.UnsealService/Status"
 )
 
-// UnsealBrokerServiceClient is the client API for UnsealBrokerService service.
+// UnsealServiceClient is the client API for UnsealService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type UnsealBrokerServiceClient interface {
+type UnsealServiceClient interface {
 	Challenge(ctx context.Context, in *ChallengeRequest, opts ...grpc.CallOption) (*ChallengeResponse, error)
 	Wrap(ctx context.Context, in *WrapRequest, opts ...grpc.CallOption) (*WrapResponse, error)
 	Unwrap(ctx context.Context, in *UnwrapRequest, opts ...grpc.CallOption) (*UnwrapResponse, error)
 	Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error)
 }
 
-type unsealBrokerServiceClient struct {
+type unsealServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewUnsealBrokerServiceClient(cc grpc.ClientConnInterface) UnsealBrokerServiceClient {
-	return &unsealBrokerServiceClient{cc}
+func NewUnsealServiceClient(cc grpc.ClientConnInterface) UnsealServiceClient {
+	return &unsealServiceClient{cc}
 }
 
-func (c *unsealBrokerServiceClient) Challenge(ctx context.Context, in *ChallengeRequest, opts ...grpc.CallOption) (*ChallengeResponse, error) {
+func (c *unsealServiceClient) Challenge(ctx context.Context, in *ChallengeRequest, opts ...grpc.CallOption) (*ChallengeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ChallengeResponse)
-	err := c.cc.Invoke(ctx, UnsealBrokerService_Challenge_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, UnsealService_Challenge_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *unsealBrokerServiceClient) Wrap(ctx context.Context, in *WrapRequest, opts ...grpc.CallOption) (*WrapResponse, error) {
+func (c *unsealServiceClient) Wrap(ctx context.Context, in *WrapRequest, opts ...grpc.CallOption) (*WrapResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WrapResponse)
-	err := c.cc.Invoke(ctx, UnsealBrokerService_Wrap_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, UnsealService_Wrap_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *unsealBrokerServiceClient) Unwrap(ctx context.Context, in *UnwrapRequest, opts ...grpc.CallOption) (*UnwrapResponse, error) {
+func (c *unsealServiceClient) Unwrap(ctx context.Context, in *UnwrapRequest, opts ...grpc.CallOption) (*UnwrapResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(UnwrapResponse)
-	err := c.cc.Invoke(ctx, UnsealBrokerService_Unwrap_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, UnsealService_Unwrap_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (c *unsealBrokerServiceClient) Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error) {
+func (c *unsealServiceClient) Status(ctx context.Context, in *StatusRequest, opts ...grpc.CallOption) (*StatusResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StatusResponse)
-	err := c.cc.Invoke(ctx, UnsealBrokerService_Status_FullMethodName, in, out, cOpts...)
+	err := c.cc.Invoke(ctx, UnsealService_Status_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// UnsealBrokerServiceServer is the server API for UnsealBrokerService service.
-// All implementations must embed UnimplementedUnsealBrokerServiceServer
+// UnsealServiceServer is the server API for UnsealService service.
+// All implementations must embed UnimplementedUnsealServiceServer
 // for forward compatibility.
-type UnsealBrokerServiceServer interface {
+type UnsealServiceServer interface {
 	Challenge(context.Context, *ChallengeRequest) (*ChallengeResponse, error)
 	Wrap(context.Context, *WrapRequest) (*WrapResponse, error)
 	Unwrap(context.Context, *UnwrapRequest) (*UnwrapResponse, error)
 	Status(context.Context, *StatusRequest) (*StatusResponse, error)
-	mustEmbedUnimplementedUnsealBrokerServiceServer()
+	mustEmbedUnimplementedUnsealServiceServer()
 }
 
-// UnimplementedUnsealBrokerServiceServer must be embedded to have
+// UnimplementedUnsealServiceServer must be embedded to have
 // forward compatible implementations.
 //
 // NOTE: this should be embedded by value instead of pointer to avoid a nil
 // pointer dereference when methods are called.
-type UnimplementedUnsealBrokerServiceServer struct{}
+type UnimplementedUnsealServiceServer struct{}
 
-func (UnimplementedUnsealBrokerServiceServer) Challenge(context.Context, *ChallengeRequest) (*ChallengeResponse, error) {
+func (UnimplementedUnsealServiceServer) Challenge(context.Context, *ChallengeRequest) (*ChallengeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Challenge not implemented")
 }
-func (UnimplementedUnsealBrokerServiceServer) Wrap(context.Context, *WrapRequest) (*WrapResponse, error) {
+func (UnimplementedUnsealServiceServer) Wrap(context.Context, *WrapRequest) (*WrapResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Wrap not implemented")
 }
-func (UnimplementedUnsealBrokerServiceServer) Unwrap(context.Context, *UnwrapRequest) (*UnwrapResponse, error) {
+func (UnimplementedUnsealServiceServer) Unwrap(context.Context, *UnwrapRequest) (*UnwrapResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Unwrap not implemented")
 }
-func (UnimplementedUnsealBrokerServiceServer) Status(context.Context, *StatusRequest) (*StatusResponse, error) {
+func (UnimplementedUnsealServiceServer) Status(context.Context, *StatusRequest) (*StatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Status not implemented")
 }
-func (UnimplementedUnsealBrokerServiceServer) mustEmbedUnimplementedUnsealBrokerServiceServer() {}
-func (UnimplementedUnsealBrokerServiceServer) testEmbeddedByValue()                             {}
+func (UnimplementedUnsealServiceServer) mustEmbedUnimplementedUnsealServiceServer() {}
+func (UnimplementedUnsealServiceServer) testEmbeddedByValue()                       {}
 
-// UnsafeUnsealBrokerServiceServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to UnsealBrokerServiceServer will
+// UnsafeUnsealServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to UnsealServiceServer will
 // result in compilation errors.
-type UnsafeUnsealBrokerServiceServer interface {
-	mustEmbedUnimplementedUnsealBrokerServiceServer()
+type UnsafeUnsealServiceServer interface {
+	mustEmbedUnimplementedUnsealServiceServer()
 }
 
-func RegisterUnsealBrokerServiceServer(s grpc.ServiceRegistrar, srv UnsealBrokerServiceServer) {
-	// If the following call panics, it indicates UnimplementedUnsealBrokerServiceServer was
+func RegisterUnsealServiceServer(s grpc.ServiceRegistrar, srv UnsealServiceServer) {
+	// If the following call panics, it indicates UnimplementedUnsealServiceServer was
 	// embedded by pointer and is nil.  This will cause panics if an
 	// unimplemented method is ever invoked, so we test this at initialization
 	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
-	s.RegisterService(&UnsealBrokerService_ServiceDesc, srv)
+	s.RegisterService(&UnsealService_ServiceDesc, srv)
 }
 
-func _UnsealBrokerService_Challenge_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _UnsealService_Challenge_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ChallengeRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(UnsealBrokerServiceServer).Challenge(ctx, in)
+		return srv.(UnsealServiceServer).Challenge(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: UnsealBrokerService_Challenge_FullMethodName,
+		FullMethod: UnsealService_Challenge_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(UnsealBrokerServiceServer).Challenge(ctx, req.(*ChallengeRequest))
+		return srv.(UnsealServiceServer).Challenge(ctx, req.(*ChallengeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _UnsealBrokerService_Wrap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _UnsealService_Wrap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(WrapRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(UnsealBrokerServiceServer).Wrap(ctx, in)
+		return srv.(UnsealServiceServer).Wrap(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: UnsealBrokerService_Wrap_FullMethodName,
+		FullMethod: UnsealService_Wrap_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(UnsealBrokerServiceServer).Wrap(ctx, req.(*WrapRequest))
+		return srv.(UnsealServiceServer).Wrap(ctx, req.(*WrapRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _UnsealBrokerService_Unwrap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _UnsealService_Unwrap_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(UnwrapRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(UnsealBrokerServiceServer).Unwrap(ctx, in)
+		return srv.(UnsealServiceServer).Unwrap(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: UnsealBrokerService_Unwrap_FullMethodName,
+		FullMethod: UnsealService_Unwrap_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(UnsealBrokerServiceServer).Unwrap(ctx, req.(*UnwrapRequest))
+		return srv.(UnsealServiceServer).Unwrap(ctx, req.(*UnwrapRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _UnsealBrokerService_Status_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _UnsealService_Status_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(StatusRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(UnsealBrokerServiceServer).Status(ctx, in)
+		return srv.(UnsealServiceServer).Status(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: UnsealBrokerService_Status_FullMethodName,
+		FullMethod: UnsealService_Status_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(UnsealBrokerServiceServer).Status(ctx, req.(*StatusRequest))
+		return srv.(UnsealServiceServer).Status(ctx, req.(*StatusRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// UnsealBrokerService_ServiceDesc is the grpc.ServiceDesc for UnsealBrokerService service.
+// UnsealService_ServiceDesc is the grpc.ServiceDesc for UnsealService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var UnsealBrokerService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "openbao.attestedunseal.v1.UnsealBrokerService",
-	HandlerType: (*UnsealBrokerServiceServer)(nil),
+var UnsealService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "openbao.attestedunseal.v1.UnsealService",
+	HandlerType: (*UnsealServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Challenge",
-			Handler:    _UnsealBrokerService_Challenge_Handler,
+			Handler:    _UnsealService_Challenge_Handler,
 		},
 		{
 			MethodName: "Wrap",
-			Handler:    _UnsealBrokerService_Wrap_Handler,
+			Handler:    _UnsealService_Wrap_Handler,
 		},
 		{
 			MethodName: "Unwrap",
-			Handler:    _UnsealBrokerService_Unwrap_Handler,
+			Handler:    _UnsealService_Unwrap_Handler,
 		},
 		{
 			MethodName: "Status",
-			Handler:    _UnsealBrokerService_Status_Handler,
+			Handler:    _UnsealService_Status_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "openbao/attestedunseal/v1/attestedunseal.proto",
+}
+
+const (
+	EnrollmentService_Status_FullMethodName = "/openbao.attestedunseal.v1.EnrollmentService/Status"
+)
+
+// EnrollmentServiceClient is the client API for EnrollmentService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type EnrollmentServiceClient interface {
+	Status(ctx context.Context, in *EnrollmentStatusRequest, opts ...grpc.CallOption) (*EnrollmentStatusResponse, error)
+}
+
+type enrollmentServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewEnrollmentServiceClient(cc grpc.ClientConnInterface) EnrollmentServiceClient {
+	return &enrollmentServiceClient{cc}
+}
+
+func (c *enrollmentServiceClient) Status(ctx context.Context, in *EnrollmentStatusRequest, opts ...grpc.CallOption) (*EnrollmentStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EnrollmentStatusResponse)
+	err := c.cc.Invoke(ctx, EnrollmentService_Status_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// EnrollmentServiceServer is the server API for EnrollmentService service.
+// All implementations must embed UnimplementedEnrollmentServiceServer
+// for forward compatibility.
+type EnrollmentServiceServer interface {
+	Status(context.Context, *EnrollmentStatusRequest) (*EnrollmentStatusResponse, error)
+	mustEmbedUnimplementedEnrollmentServiceServer()
+}
+
+// UnimplementedEnrollmentServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedEnrollmentServiceServer struct{}
+
+func (UnimplementedEnrollmentServiceServer) Status(context.Context, *EnrollmentStatusRequest) (*EnrollmentStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Status not implemented")
+}
+func (UnimplementedEnrollmentServiceServer) mustEmbedUnimplementedEnrollmentServiceServer() {}
+func (UnimplementedEnrollmentServiceServer) testEmbeddedByValue()                           {}
+
+// UnsafeEnrollmentServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to EnrollmentServiceServer will
+// result in compilation errors.
+type UnsafeEnrollmentServiceServer interface {
+	mustEmbedUnimplementedEnrollmentServiceServer()
+}
+
+func RegisterEnrollmentServiceServer(s grpc.ServiceRegistrar, srv EnrollmentServiceServer) {
+	// If the following call panics, it indicates UnimplementedEnrollmentServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&EnrollmentService_ServiceDesc, srv)
+}
+
+func _EnrollmentService_Status_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EnrollmentStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EnrollmentServiceServer).Status(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: EnrollmentService_Status_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EnrollmentServiceServer).Status(ctx, req.(*EnrollmentStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// EnrollmentService_ServiceDesc is the grpc.ServiceDesc for EnrollmentService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var EnrollmentService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "openbao.attestedunseal.v1.EnrollmentService",
+	HandlerType: (*EnrollmentServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Status",
+			Handler:    _EnrollmentService_Status_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "openbao/attestedunseal/v1/attestedunseal.proto",
+}
+
+const (
+	RecoveryService_Status_FullMethodName = "/openbao.attestedunseal.v1.RecoveryService/Status"
+)
+
+// RecoveryServiceClient is the client API for RecoveryService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type RecoveryServiceClient interface {
+	Status(ctx context.Context, in *RecoveryStatusRequest, opts ...grpc.CallOption) (*RecoveryStatusResponse, error)
+}
+
+type recoveryServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewRecoveryServiceClient(cc grpc.ClientConnInterface) RecoveryServiceClient {
+	return &recoveryServiceClient{cc}
+}
+
+func (c *recoveryServiceClient) Status(ctx context.Context, in *RecoveryStatusRequest, opts ...grpc.CallOption) (*RecoveryStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RecoveryStatusResponse)
+	err := c.cc.Invoke(ctx, RecoveryService_Status_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RecoveryServiceServer is the server API for RecoveryService service.
+// All implementations must embed UnimplementedRecoveryServiceServer
+// for forward compatibility.
+type RecoveryServiceServer interface {
+	Status(context.Context, *RecoveryStatusRequest) (*RecoveryStatusResponse, error)
+	mustEmbedUnimplementedRecoveryServiceServer()
+}
+
+// UnimplementedRecoveryServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedRecoveryServiceServer struct{}
+
+func (UnimplementedRecoveryServiceServer) Status(context.Context, *RecoveryStatusRequest) (*RecoveryStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Status not implemented")
+}
+func (UnimplementedRecoveryServiceServer) mustEmbedUnimplementedRecoveryServiceServer() {}
+func (UnimplementedRecoveryServiceServer) testEmbeddedByValue()                         {}
+
+// UnsafeRecoveryServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to RecoveryServiceServer will
+// result in compilation errors.
+type UnsafeRecoveryServiceServer interface {
+	mustEmbedUnimplementedRecoveryServiceServer()
+}
+
+func RegisterRecoveryServiceServer(s grpc.ServiceRegistrar, srv RecoveryServiceServer) {
+	// If the following call panics, it indicates UnimplementedRecoveryServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&RecoveryService_ServiceDesc, srv)
+}
+
+func _RecoveryService_Status_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RecoveryStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RecoveryServiceServer).Status(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RecoveryService_Status_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RecoveryServiceServer).Status(ctx, req.(*RecoveryStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// RecoveryService_ServiceDesc is the grpc.ServiceDesc for RecoveryService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var RecoveryService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "openbao.attestedunseal.v1.RecoveryService",
+	HandlerType: (*RecoveryServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Status",
+			Handler:    _RecoveryService_Status_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "openbao/attestedunseal/v1/attestedunseal.proto",
+}
+
+const (
+	AdminService_Status_FullMethodName = "/openbao.attestedunseal.v1.AdminService/Status"
+)
+
+// AdminServiceClient is the client API for AdminService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type AdminServiceClient interface {
+	Status(ctx context.Context, in *AdminStatusRequest, opts ...grpc.CallOption) (*AdminStatusResponse, error)
+}
+
+type adminServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewAdminServiceClient(cc grpc.ClientConnInterface) AdminServiceClient {
+	return &adminServiceClient{cc}
+}
+
+func (c *adminServiceClient) Status(ctx context.Context, in *AdminStatusRequest, opts ...grpc.CallOption) (*AdminStatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdminStatusResponse)
+	err := c.cc.Invoke(ctx, AdminService_Status_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// AdminServiceServer is the server API for AdminService service.
+// All implementations must embed UnimplementedAdminServiceServer
+// for forward compatibility.
+type AdminServiceServer interface {
+	Status(context.Context, *AdminStatusRequest) (*AdminStatusResponse, error)
+	mustEmbedUnimplementedAdminServiceServer()
+}
+
+// UnimplementedAdminServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedAdminServiceServer struct{}
+
+func (UnimplementedAdminServiceServer) Status(context.Context, *AdminStatusRequest) (*AdminStatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Status not implemented")
+}
+func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
+func (UnimplementedAdminServiceServer) testEmbeddedByValue()                      {}
+
+// UnsafeAdminServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to AdminServiceServer will
+// result in compilation errors.
+type UnsafeAdminServiceServer interface {
+	mustEmbedUnimplementedAdminServiceServer()
+}
+
+func RegisterAdminServiceServer(s grpc.ServiceRegistrar, srv AdminServiceServer) {
+	// If the following call panics, it indicates UnimplementedAdminServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&AdminService_ServiceDesc, srv)
+}
+
+func _AdminService_Status_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdminStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).Status(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_Status_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).Status(ctx, req.(*AdminStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// AdminService_ServiceDesc is the grpc.ServiceDesc for AdminService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var AdminService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "openbao.attestedunseal.v1.AdminService",
+	HandlerType: (*AdminServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Status",
+			Handler:    _AdminService_Status_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

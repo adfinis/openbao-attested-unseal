@@ -1,0 +1,64 @@
+package broker
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/dc-tec/openbao-attested-unseal/internal/keyring"
+	protocolv1 "github.com/dc-tec/openbao-attested-unseal/internal/protocol/v1"
+)
+
+var (
+	// ErrSubjectNotFound indicates an unknown subject.
+	ErrSubjectNotFound = errors.New("subject not found")
+	// ErrSubjectRevoked indicates a revoked subject.
+	ErrSubjectRevoked = errors.New("subject revoked")
+	// ErrChallengeNotFound indicates an unknown challenge.
+	ErrChallengeNotFound = errors.New("challenge not found")
+	// ErrChallengeExpired indicates an expired challenge.
+	ErrChallengeExpired = errors.New("challenge expired")
+	// ErrChallengeReplayed indicates a consumed challenge.
+	ErrChallengeReplayed = errors.New("challenge already consumed")
+	// ErrChallengeMismatch indicates challenge scope does not match the request.
+	ErrChallengeMismatch = errors.New("challenge scope mismatch")
+)
+
+// Challenge is broker replay-prevention state.
+type Challenge struct {
+	ID        string
+	Nonce     []byte
+	ClusterID string
+	Subject   string
+	Operation protocolv1.Operation
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
+
+// Subject is one broker-authorized caller identity.
+type Subject struct {
+	ClusterID string
+	Subject   string
+	Revoked   bool
+}
+
+// Store persists broker state.
+type Store interface {
+	Close() error
+	ConfigureDevelopment(ctx context.Context, config Config, key []byte) error
+	LoadKeyring(ctx context.Context, clusterID string) (*keyring.Ring, error)
+	KeyVersion(ctx context.Context, ref keyring.KeyRef) (keyring.KeyVersion, error)
+	Subject(ctx context.Context, clusterID string, subject string) (Subject, error)
+	RevokeSubject(ctx context.Context, clusterID string, subject string) error
+	CreateChallenge(ctx context.Context, challenge Challenge) error
+	ConsumeChallenge(
+		ctx context.Context,
+		challengeID string,
+		clusterID string,
+		subject string,
+		operation protocolv1.Operation,
+		now time.Time,
+	) error
+	InsertAuditEvent(ctx context.Context, event AuditEvent) error
+	AuditEvents(ctx context.Context) ([]AuditEvent, error)
+}
