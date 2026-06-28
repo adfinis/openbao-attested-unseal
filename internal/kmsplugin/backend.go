@@ -59,9 +59,12 @@ type backendFactory interface {
 	NewBackend(ctx context.Context, config Config) (Backend, error)
 }
 
-type brokerFactory struct{}
+type productionFactory struct{}
 
-func (brokerFactory) NewBackend(_ context.Context, config Config) (Backend, error) {
+func (productionFactory) NewBackend(ctx context.Context, config Config) (Backend, error) {
+	if config.Mode == ModeLocalTPM {
+		return newLocalTPMBackend(ctx, config)
+	}
 	return unavailableBackend{config: config}, nil
 }
 

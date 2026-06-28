@@ -263,6 +263,34 @@ func TestDecryptOnlyKeyCannotWrap(t *testing.T) {
 	}
 }
 
+func TestEvidenceVerifierFailureDeniesWrap(t *testing.T) {
+	config := testConfig(t)
+	store := newTestStore(t, config)
+	telemetry := newTestTelemetry(t)
+	service := NewServiceWithEvidenceVerifier(
+		config,
+		store,
+		NewFileAuditSink(config.AuditFilePath, false),
+		telemetry,
+		failingEvidenceVerifier{},
+	)
+
+	resp, err := service.Wrap(context.Background(), &protocolv1.WrapRequest{
+		Plaintext: []byte("seal"),
+		Evidence:  testEvidence("chal_test", config.DevelopmentSubject),
+	})
+	if err != nil {
+		t.Fatalf("Wrap returned error: %v", err)
+	}
+	if resp.GetDecision().GetState() != protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_DENY {
+		t.Fatalf("decision = %s, want deny", resp.GetDecision().GetState())
+	}
+	errs := resp.GetDecision().GetErrors()
+	if len(errs) != 1 || errs[0].GetCode() != protocolv1.ErrorCode_ERROR_CODE_ATTESTATION_FAILED {
+		t.Fatalf("errors = %v, want attestation failure", errs)
+	}
+}
+
 func TestTelemetryAttributesDoNotIncludeSecretMaterial(t *testing.T) {
 	attrs := safeAttributes(
 		"prod-eu1",
@@ -787,4 +815,13 @@ func dialTLS(
 		t.Fatalf("NewClient returned error: %v", err)
 	}
 	return conn
+}
+
+type failingEvidenceVerifier struct{}
+
+func (failingEvidenceVerifier) VerifyEvidence(
+	context.Context,
+	*protocolv1.EvidenceEnvelope,
+) (VerifiedEvidence, error) {
+	return VerifiedEvidence{}, errors.New("test verifier failure")
 }

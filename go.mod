@@ -3,6 +3,7 @@ module github.com/adfinis/openbao-attested-unseal
 go 1.26.4
 
 require (
+	github.com/google/go-tpm v0.9.8
 	github.com/openbao/go-kms-wrapping/plugin/v2 v2.3.0
 	github.com/openbao/go-kms-wrapping/v2 v2.8.0
 	go.opentelemetry.io/otel v1.44.0

@@ -16,6 +16,8 @@ const (
 	configKeyKeyID         = "key_id"
 	configKeyKeyVersion    = "key_version"
 	configKeyPolicyID      = "policy_id"
+	configKeyStatePath     = "state_path"
+	configKeyTPMDevice     = "tpm_device"
 )
 
 // Mode selects the configured wrapper backend.
@@ -24,6 +26,8 @@ type Mode string
 const (
 	// ModeBroker delegates wrapping operations to the internal-network broker.
 	ModeBroker Mode = "broker"
+	// ModeLocalTPM unwraps the local key through a TPM sealed object.
+	ModeLocalTPM Mode = "local-tpm"
 )
 
 // Config is the strict wrapper configuration parsed from OpenBao seal config.
@@ -34,6 +38,8 @@ type Config struct {
 	KeyID         string
 	KeyVersion    uint32
 	PolicyID      string
+	StatePath     string
+	TPMDevice     string
 }
 
 func parseConfig(values map[string]string) (Config, error) {
@@ -49,6 +55,8 @@ func parseConfig(values map[string]string) (Config, error) {
 		ClusterID:     strings.TrimSpace(values[configKeyClusterID]),
 		KeyID:         strings.TrimSpace(values[configKeyKeyID]),
 		PolicyID:      strings.TrimSpace(values[configKeyPolicyID]),
+		StatePath:     strings.TrimSpace(values[configKeyStatePath]),
+		TPMDevice:     strings.TrimSpace(values[configKeyTPMDevice]),
 	}
 	if raw := strings.TrimSpace(values[configKeyKeyVersion]); raw != "" {
 		version, err := strconv.ParseUint(raw, 10, 32)
@@ -70,8 +78,15 @@ func (c Config) Validate() error {
 		if c.BrokerAddress == "" {
 			return fmt.Errorf("broker_addr is required: %w", wrappingConfigError())
 		}
+	case ModeLocalTPM:
+		if c.StatePath == "" {
+			return fmt.Errorf("state_path is required: %w", wrappingConfigError())
+		}
+		if c.KeyID == "" || c.KeyVersion == 0 {
+			return fmt.Errorf("key_id and key_version are required for local-tpm: %w", wrappingConfigError())
+		}
 	default:
-		return fmt.Errorf("mode must be %q: %w", ModeBroker, wrappingConfigError())
+		return fmt.Errorf("mode must be %q or %q: %w", ModeBroker, ModeLocalTPM, wrappingConfigError())
 	}
 	if err := keyring.ValidateIdentifier(c.ClusterID); err != nil {
 		return fmt.Errorf("invalid cluster_id: %w", err)
@@ -106,6 +121,8 @@ func knownConfigKey(key string) bool {
 	case configKeyMode, configKeyBrokerAddress, configKeyClusterID:
 		return true
 	case configKeyKeyID, configKeyKeyVersion, configKeyPolicyID:
+		return true
+	case configKeyStatePath, configKeyTPMDevice:
 		return true
 	default:
 		return false

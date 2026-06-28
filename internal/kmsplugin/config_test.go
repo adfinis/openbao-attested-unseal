@@ -45,3 +45,36 @@ func TestParseConfigAcceptsBroker(t *testing.T) {
 		t.Fatalf("ConfiguredKeyID() = %q, want prod-eu1/root/v7", got)
 	}
 }
+
+func TestParseConfigAcceptsLocalTPM(t *testing.T) {
+	config, err := parseConfig(map[string]string{
+		configKeyMode:       string(ModeLocalTPM),
+		configKeyClusterID:  "prod-eu1",
+		configKeyKeyID:      "root",
+		configKeyKeyVersion: "7",
+		configKeyPolicyID:   "secureboot",
+		configKeyStatePath:  "/var/lib/openbao/attested-unseal",
+		configKeyTPMDevice:  "/dev/tpmrm0",
+	})
+	if err != nil {
+		t.Fatalf("parseConfig returned error: %v", err)
+	}
+	if got := config.ConfiguredKeyID(); got != "prod-eu1/root/v7" {
+		t.Fatalf("ConfiguredKeyID() = %q, want prod-eu1/root/v7", got)
+	}
+	if config.TPMDevice != "/dev/tpmrm0" {
+		t.Fatalf("TPMDevice = %q, want /dev/tpmrm0", config.TPMDevice)
+	}
+}
+
+func TestParseConfigRejectsLocalTPMWithoutStatePath(t *testing.T) {
+	_, err := parseConfig(map[string]string{
+		configKeyMode:       string(ModeLocalTPM),
+		configKeyClusterID:  "prod-eu1",
+		configKeyKeyID:      "root",
+		configKeyKeyVersion: "7",
+	})
+	if !errors.Is(err, wrapping.ErrInvalidParameter) {
+		t.Fatalf("parseConfig error = %v, want ErrInvalidParameter", err)
+	}
+}

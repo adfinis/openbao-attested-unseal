@@ -5,6 +5,7 @@ weight: 40
 browse:
   - "/reference/cli"
   - "/reference/broker-config"
+  - "/reference/local-tpm"
 ---
 
 # Reference

@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/adfinis/openbao-attested-unseal/internal/broker"
 	"github.com/adfinis/openbao-attested-unseal/internal/cli"
@@ -147,6 +150,74 @@ func TestEnrollmentRequestIssueApplyJSON(t *testing.T) {
 	)
 	if got := cli.ProcessExitCode(err); got != int(cli.ExitCheckFailed) {
 		t.Fatalf("replay exit code = %d, want %d", got, cli.ExitCheckFailed)
+	}
+}
+
+func TestTPMProvisionAndStatusWithSWTPM(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("swtpm integration is not supported on Windows")
+	}
+	if _, err := exec.LookPath("swtpm"); err != nil {
+		t.Skip("swtpm is not installed")
+	}
+	socketPath, stop := startSWTPMForCTL(t)
+	defer stop()
+
+	dir := t.TempDir()
+	brokerState := filepath.Join(dir, "broker.db")
+	localTPMState := filepath.Join(dir, "local-tpm-state")
+	recoveryPath := filepath.Join(dir, "recovery.json")
+	sharesPath := filepath.Join(dir, "shares.json")
+
+	var initOut initOutput
+	runJSON(t, &initOut,
+		"init",
+		"-state", brokerState,
+		"-recovery-package", recoveryPath,
+		"-cluster-id", "prod-eu1",
+		"-key-id", "root",
+		"-format", "json",
+	)
+	if err := writeJSONFile(sharesPath, initOut.RecoveryShares[:3]); err != nil {
+		t.Fatalf("writeJSONFile shares returned error: %v", err)
+	}
+
+	var provision tpmProvisionOutput
+	runJSON(t, &provision,
+		"tpm", "provision",
+		"-state-path", localTPMState,
+		"-package", recoveryPath,
+		"-shares-file", sharesPath,
+		"-tpm-device", socketPath,
+		"-format", "json",
+	)
+	if provision.KeyID != "prod-eu1/root/v1" {
+		t.Fatalf("provision key = %q, want prod-eu1/root/v1", provision.KeyID)
+	}
+	if !containsString(provision.Warnings, "local TPM revocation requires key rotation") {
+		t.Fatalf("provision warnings = %v", provision.Warnings)
+	}
+	if provision.SealConfig == "" {
+		t.Fatal("seal config is empty")
+	}
+
+	var status tpmStatusOutput
+	runJSON(t, &status,
+		"tpm", "status",
+		"-state-path", localTPMState,
+		"-cluster-id", "prod-eu1",
+		"-key-id", "root",
+		"-key-version", "1",
+		"-format", "json",
+	)
+	if !status.Ready {
+		t.Fatalf("TPM status ready = false, errors = %v", status.Errors)
+	}
+	if status.PolicyMode != "tpm-only" {
+		t.Fatalf("TPM status policy = %q, want tpm-only", status.PolicyMode)
+	}
+	if !containsString(status.Warnings, "local TPM revocation requires key rotation") {
+		t.Fatalf("status warnings = %v", status.Warnings)
 	}
 }
 
@@ -421,4 +492,63 @@ func runCommand(args ...string) error {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	return Execute(version.Info{Version: "test"}, args, &stdout, &stderr)
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func startSWTPMForCTL(t *testing.T) (string, func()) {
+	t.Helper()
+	baseDir, err := os.MkdirTemp("/tmp", "bao-swtpm-")
+	if err != nil {
+		t.Fatalf("MkdirTemp returned error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(baseDir)
+	})
+	stateDir := filepath.Join(baseDir, "state")
+	if err := os.Mkdir(stateDir, 0o700); err != nil {
+		t.Fatalf("Mkdir returned error: %v", err)
+	}
+	socketPath := filepath.Join(baseDir, "swtpm.sock")
+	ctrlPath := filepath.Join(baseDir, "swtpm.ctrl")
+	logPath := filepath.Join(baseDir, "swtpm.log")
+	//nolint:gosec // Test harness starts the local swtpm binary with controlled temporary paths.
+	cmd := exec.Command(
+		"swtpm",
+		"socket",
+		"--tpm2",
+		"--tpmstate", "dir="+stateDir,
+		"--ctrl", "type=unixio,path="+ctrlPath,
+		"--server", "type=unixio,path="+socketPath,
+		"--flags", "not-need-init,startup-clear",
+		"--log", "file="+logPath+",level=1",
+	)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start swtpm: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(socketPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = cmd.Process.Kill()
+			t.Fatalf("swtpm socket was not created; log path: %s", logPath)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	stop := func() {
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+		}
+		_ = cmd.Wait()
+	}
+	return socketPath, stop
 }

@@ -10,7 +10,7 @@ import (
 	wrapping "github.com/openbao/go-kms-wrapping/v2"
 )
 
-func TestWrapperEncryptBeforeInitFailsClosed(t *testing.T) {
+func TestWrapperEncryptBeforeSetConfigFailsClosed(t *testing.T) {
 	wrapper := NewWrapperWithFactory(inMemoryFactory{backend: newTestInMemoryBackend(t)})
 	_, err := wrapper.Encrypt(context.Background(), []byte("plaintext"))
 	if !errors.Is(err, ErrNotInitialized) {
@@ -18,11 +18,29 @@ func TestWrapperEncryptBeforeInitFailsClosed(t *testing.T) {
 	}
 }
 
-func TestWrapperDecryptBeforeInitFailsClosed(t *testing.T) {
+func TestWrapperDecryptBeforeSetConfigFailsClosed(t *testing.T) {
 	wrapper := NewWrapperWithFactory(inMemoryFactory{backend: newTestInMemoryBackend(t)})
 	_, err := wrapper.Decrypt(context.Background(), &wrapping.BlobInfo{})
 	if !errors.Is(err, ErrNotInitialized) {
 		t.Fatalf("Decrypt error = %v, want ErrNotInitialized", err)
+	}
+}
+
+func TestWrapperSetConfigInitializesBackend(t *testing.T) {
+	wrapper := NewWrapperWithFactory(inMemoryFactory{backend: newTestInMemoryBackend(t)})
+	if _, err := wrapper.SetConfig(context.Background(), wrapping.WithConfigMap(validConfigMap())); err != nil {
+		t.Fatalf("SetConfig returned error: %v", err)
+	}
+	blob, err := wrapper.Encrypt(context.Background(), []byte("plaintext"), wrapping.WithAad([]byte("aad")))
+	if err != nil {
+		t.Fatalf("Encrypt after SetConfig returned error: %v", err)
+	}
+	plaintext, err := wrapper.Decrypt(context.Background(), blob, wrapping.WithAad([]byte("aad")))
+	if err != nil {
+		t.Fatalf("Decrypt after SetConfig returned error: %v", err)
+	}
+	if string(plaintext) != "plaintext" {
+		t.Fatalf("plaintext = %q, want plaintext", plaintext)
 	}
 }
 

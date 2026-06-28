@@ -1761,7 +1761,7 @@ const file_openbao_attestedunseal_v1_attestedunseal_proto_rawDesc = "" +
 	"\x0fRecoveryService\x12m\n" +
 	"\x06Status\x120.openbao.attestedunseal.v1.RecoveryStatusRequest\x1a1.openbao.attestedunseal.v1.RecoveryStatusResponse2w\n" +
 	"\fAdminService\x12g\n" +
-	"\x06Status\x12-.openbao.attestedunseal.v1.AdminStatusRequest\x1a..openbao.attestedunseal.v1.AdminStatusResponseBKZIgithub.com/adfinis/openbao-attested-unseal/internal/protocol/v1;protocolv1b\x06proto3"
+	"\x06Status\x12-.openbao.attestedunseal.v1.AdminStatusRequest\x1a..openbao.attestedunseal.v1.AdminStatusResponseBLZJgithub.com/adfinis/openbao-attested-unseal/internal/protocol/v1;protocolv1b\x06proto3"
 
 var (
 	file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescOnce sync.Once

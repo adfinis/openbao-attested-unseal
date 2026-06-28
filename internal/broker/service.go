@@ -18,6 +18,7 @@ type Service struct {
 	audit     *FileAuditSink
 	policy    *PolicyEngine
 	telemetry *Telemetry
+	verifier  EvidenceVerifier
 	config    Config
 	clock     func() time.Time
 }
@@ -29,9 +30,25 @@ func NewService(config Config, store Store, audit *FileAuditSink, telemetry *Tel
 		audit:     audit,
 		policy:    NewPolicyEngine(store, config.Policy(), telemetry),
 		telemetry: telemetry,
+		verifier:  DevelopmentEvidenceVerifier{},
 		config:    config,
 		clock:     time.Now,
 	}
+}
+
+// NewServiceWithEvidenceVerifier creates a service with an injected evidence verifier.
+func NewServiceWithEvidenceVerifier(
+	config Config,
+	store Store,
+	audit *FileAuditSink,
+	telemetry *Telemetry,
+	verifier EvidenceVerifier,
+) *Service {
+	service := NewService(config, store, audit, telemetry)
+	if verifier != nil {
+		service.verifier = verifier
+	}
+	return service
 }
 
 // Challenge creates a single-use broker challenge.
@@ -105,7 +122,19 @@ func (s *Service) Wrap(
 			).Proto(),
 		}, nil
 	}
-	subject := subjectFromEvidence(req.GetEvidence())
+	subject, evidenceDecision := s.evidenceSubject(ctx, req.GetEvidence())
+	if !evidenceDecision.Allowed() {
+		s.auditDecision(
+			ctx,
+			subject,
+			protocolv1.Operation_OPERATION_WRAP,
+			s.config.ClusterID,
+			keyRefView{},
+			evidenceDecision,
+			req.GetEvidence(),
+		)
+		return &protocolv1.WrapResponse{Decision: evidenceDecision.Proto()}, nil
+	}
 	ref, decision := s.wrapKeyRef(ctx, req.GetRequestedKey())
 	if !decision.Allowed() {
 		s.auditDecision(
@@ -215,7 +244,19 @@ func (s *Service) Unwrap(
 			).Proto(),
 		}, nil
 	}
-	subject := subjectFromEvidence(req.GetEvidence())
+	subject, evidenceDecision := s.evidenceSubject(ctx, req.GetEvidence())
+	if !evidenceDecision.Allowed() {
+		s.auditDecision(
+			ctx,
+			subject,
+			protocolv1.Operation_OPERATION_UNWRAP,
+			s.config.ClusterID,
+			keyRefView{},
+			evidenceDecision,
+			req.GetEvidence(),
+		)
+		return &protocolv1.UnwrapResponse{Decision: evidenceDecision.Proto()}, nil
+	}
 	ref, err := keyRefFromProto(req.GetBlob().GetKey())
 	if err != nil {
 		decision := Deny(s.config.Policy(), protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, "blob key reference is invalid")
@@ -404,6 +445,25 @@ func (s *Service) evaluate(ctx context.Context, req policyRequest) PolicyDecisio
 	span.SetAttributes(attrs...)
 	s.telemetry.recordPolicyLatency(ctx, started, attrs)
 	return decision
+}
+
+func (s *Service) evidenceSubject(
+	ctx context.Context,
+	evidence *protocolv1.EvidenceEnvelope,
+) (string, PolicyDecision) {
+	verifier := s.verifier
+	if verifier == nil {
+		verifier = DevelopmentEvidenceVerifier{}
+	}
+	verified, err := verifier.VerifyEvidence(ctx, evidence)
+	if err != nil {
+		return "", Deny(
+			s.config.Policy(),
+			protocolv1.ErrorCode_ERROR_CODE_ATTESTATION_FAILED,
+			"attestation verification failed",
+		)
+	}
+	return verified.Subject, Allow(s.config.Policy())
 }
 
 func (s *Service) auditDecision(

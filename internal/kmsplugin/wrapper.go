@@ -26,7 +26,7 @@ var (
 
 // NewWrapper constructs the production wrapper scaffold.
 func NewWrapper() *Wrapper {
-	return NewWrapperWithFactory(brokerFactory{})
+	return NewWrapperWithFactory(productionFactory{})
 }
 
 // NewWrapperWithFactory constructs a wrapper with an injected backend factory.
@@ -40,7 +40,7 @@ func (w *Wrapper) Type(context.Context) (wrapping.WrapperType, error) {
 }
 
 // SetConfig validates and stores wrapper configuration.
-func (w *Wrapper) SetConfig(_ context.Context, options ...wrapping.Option) (*wrapping.WrapperConfig, error) {
+func (w *Wrapper) SetConfig(ctx context.Context, options ...wrapping.Option) (*wrapping.WrapperConfig, error) {
 	opts, err := wrapping.GetOpts(options...)
 	if err != nil {
 		return nil, err
@@ -55,7 +55,12 @@ func (w *Wrapper) SetConfig(_ context.Context, options ...wrapping.Option) (*wra
 	if w.backend != nil {
 		return nil, fmt.Errorf("wrapper is already initialized: %w", wrapping.ErrInvalidParameter)
 	}
+	backend, err := w.newBackendLocked(ctx, config)
+	if err != nil {
+		return nil, err
+	}
 	w.config = config
+	w.backend = backend
 
 	return &wrapping.WrapperConfig{
 		Metadata: map[string]string{
@@ -63,6 +68,8 @@ func (w *Wrapper) SetConfig(_ context.Context, options ...wrapping.Option) (*wra
 			"cluster_id":  config.ClusterID,
 			"key_id":      config.ConfiguredKeyID(),
 			"mode":        string(config.Mode),
+			"state_path":  config.StatePath,
+			"tpm_device":  config.TPMDevice,
 			"type":        WrapperType.String(),
 		},
 	}, nil
@@ -82,10 +89,7 @@ func (w *Wrapper) Init(ctx context.Context, _ ...wrapping.Option) error {
 	if w.backend != nil {
 		return nil
 	}
-	if w.factory == nil {
-		return fmt.Errorf("%w: backend factory is missing", ErrBackendUnavailable)
-	}
-	backend, err := w.factory.NewBackend(ctx, w.config)
+	backend, err := w.newBackendLocked(ctx, w.config)
 	if err != nil {
 		return err
 	}
@@ -172,4 +176,11 @@ func (w *Wrapper) currentBackend() (Backend, error) {
 		return nil, ErrNotInitialized
 	}
 	return w.backend, nil
+}
+
+func (w *Wrapper) newBackendLocked(ctx context.Context, config Config) (Backend, error) {
+	if w.factory == nil {
+		return nil, fmt.Errorf("%w: backend factory is missing", ErrBackendUnavailable)
+	}
+	return w.factory.NewBackend(ctx, config)
 }

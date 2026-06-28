@@ -12,8 +12,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +25,7 @@ import (
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	"github.com/adfinis/openbao-attested-unseal/internal/recovery"
+	tpmlocal "github.com/adfinis/openbao-attested-unseal/internal/tpm"
 	"github.com/adfinis/openbao-attested-unseal/internal/version"
 )
 
@@ -58,6 +61,8 @@ func Execute(info version.Info, args []string, stdout io.Writer, stderr io.Write
 		return enrollCommand(args[1:], stdout, stderr)
 	case "recover":
 		return recoverCommand(args[1:], stdout, stderr)
+	case "tpm":
+		return tpmCommand(args[1:], stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
 		return cli.WithExitCode(cli.ExitUsage, fmt.Errorf("unknown command %q", args[0]))
@@ -595,6 +600,251 @@ func recoverCommand(args []string, stdout io.Writer, stderr io.Writer) error {
 	}
 }
 
+func tpmCommand(args []string, stdout io.Writer, stderr io.Writer) error {
+	if len(args) == 0 {
+		return cli.WithExitCode(cli.ExitUsage, errors.New("expected tpm subcommand"))
+	}
+	switch args[0] {
+	case "provision":
+		return tpmProvisionCommand(args[1:], stdout, stderr)
+	case "status":
+		return tpmStatusCommand(args[1:], stdout, stderr)
+	default:
+		return cli.WithExitCode(cli.ExitUsage, fmt.Errorf("unknown tpm subcommand %q", args[0]))
+	}
+}
+
+type tpmProvisionOptions struct {
+	statePath         string
+	packagePath       string
+	sharesPath        string
+	expectedClusterID string
+	keyVersion        uint32
+	policyMode        string
+	pcrBank           string
+	pcrs              []int
+	policyID          string
+	tpmDevice         string
+	format            string
+}
+
+func tpmProvisionCommand(args []string, stdout io.Writer, stderr io.Writer) error {
+	options, err := parseTPMProvisionOptions(args, stderr)
+	if err != nil {
+		return err
+	}
+	out, err := provisionLocalTPM(options)
+	if err != nil {
+		return err
+	}
+	return writeOutput(stdout, options.format, out, func() {
+		_, _ = fmt.Fprintf(stdout, "Local TPM state: %s\n", out.StatePath)
+		_, _ = fmt.Fprintf(stdout, "Key: %s\n", out.KeyID)
+		_, _ = fmt.Fprintf(stdout, "Policy: %s\n", out.PolicyMode)
+		for _, warning := range out.Warnings {
+			_, _ = fmt.Fprintf(stdout, "Warning: %s\n", warning)
+		}
+		_, _ = fmt.Fprintln(stdout, out.SealConfig)
+	})
+}
+
+func parseTPMProvisionOptions(args []string, stderr io.Writer) (tpmProvisionOptions, error) {
+	flags := flag.NewFlagSet("tpm provision", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	statePath := flags.String("state-path", "", "Local TPM state directory.")
+	packagePath := flags.String("package", "", "Recovery package metadata path.")
+	sharesPath := flags.String("shares-file", "", "Recovery shares file.")
+	expectedClusterID := flags.String("cluster-id", "", "Expected recovery package cluster identifier.")
+	keyVersion := flags.Uint("key-version", 1, "Wrapping key version to provision.")
+	policyMode := flags.String("policy", tpmlocal.PolicyModeTPMOnly, "TPM policy: tpm-only or secureboot.")
+	pcrBank := flags.String("pcr-bank", tpmlocal.HashSHA256, "PCR bank for secureboot policy.")
+	pcrsRaw := flags.String("pcrs", "7", "Comma-separated PCR indexes for secureboot policy.")
+	policyID := flags.String("policy-id", "local-tpm", "Local key policy identifier.")
+	tpmDevice := flags.String("tpm-device", "", "TPM device path or swtpm Unix socket.")
+	format := flags.String("format", formatText, "Output format: text or json.")
+	if err := flags.Parse(args); err != nil {
+		return tpmProvisionOptions{}, cli.WithExitCode(cli.ExitUsage, err)
+	}
+	if err := validateFormat(*format); err != nil {
+		return tpmProvisionOptions{}, err
+	}
+	if strings.TrimSpace(*statePath) == "" ||
+		strings.TrimSpace(*packagePath) == "" ||
+		strings.TrimSpace(*sharesPath) == "" {
+		return tpmProvisionOptions{}, cli.WithExitCode(
+			cli.ExitUsage,
+			errors.New("-state-path, -package, and -shares-file are required"),
+		)
+	}
+	mode, err := validateTPMPolicyMode(*policyMode)
+	if err != nil {
+		return tpmProvisionOptions{}, err
+	}
+	pcrs, err := parsePCRIndexes(*pcrsRaw)
+	if err != nil {
+		return tpmProvisionOptions{}, err
+	}
+	parsedKeyVersion, err := parseKeyVersion(*keyVersion)
+	if err != nil {
+		return tpmProvisionOptions{}, err
+	}
+	if err := keyring.ValidateIdentifier(*policyID); err != nil {
+		return tpmProvisionOptions{}, cli.WithExitCode(cli.ExitUsage, err)
+	}
+	return tpmProvisionOptions{
+		statePath:         *statePath,
+		packagePath:       *packagePath,
+		sharesPath:        *sharesPath,
+		expectedClusterID: strings.TrimSpace(*expectedClusterID),
+		keyVersion:        parsedKeyVersion,
+		policyMode:        mode,
+		pcrBank:           strings.ToLower(strings.TrimSpace(*pcrBank)),
+		pcrs:              pcrs,
+		policyID:          strings.TrimSpace(*policyID),
+		tpmDevice:         strings.TrimSpace(*tpmDevice),
+		format:            *format,
+	}, nil
+}
+
+func provisionLocalTPM(options tpmProvisionOptions) (tpmProvisionOutput, error) {
+	var metadata recovery.PackageMetadata
+	if err := readJSONFile(options.packagePath, &metadata); err != nil {
+		return tpmProvisionOutput{}, cli.WithExitCode(cli.ExitConfig, err)
+	}
+	if options.expectedClusterID != "" && metadata.ClusterID != options.expectedClusterID {
+		return tpmProvisionOutput{}, cli.WithExitCode(
+			cli.ExitCheckFailed,
+			fmt.Errorf(
+				"recovery package cluster %q does not match expected cluster %q",
+				metadata.ClusterID,
+				options.expectedClusterID,
+			),
+		)
+	}
+	shares, err := readSharesFile(options.sharesPath)
+	if err != nil {
+		return tpmProvisionOutput{}, cli.WithExitCode(cli.ExitConfig, err)
+	}
+	secret, err := recovery.Recover(metadata, shares)
+	if err != nil {
+		return tpmProvisionOutput{}, cli.WithExitCode(cli.ExitCheckFailed, err)
+	}
+	selection := tpmlocal.PCRSelection{}
+	if options.policyMode == tpmlocal.PolicyModeSecureBoot {
+		selection = tpmlocal.PCRSelection{Hash: options.pcrBank, PCRs: options.pcrs}
+	}
+	ref := keyring.KeyRef{
+		ClusterID: metadata.ClusterID,
+		KeyID:     metadata.KeyID,
+		Version:   options.keyVersion,
+	}
+	localMetadata, err := tpmlocal.StoreLocalKey(
+		context.Background(),
+		options.statePath,
+		tpmlocal.Device{Path: options.tpmDevice},
+		keyring.KeyVersion{
+			Ref:       ref,
+			Status:    keyring.StatusActive,
+			Algorithm: keyring.AlgorithmAES256GCM,
+			PolicyID:  options.policyID,
+			Material:  secret,
+		},
+		options.policyMode,
+		selection,
+	)
+	if err != nil {
+		return tpmProvisionOutput{}, cli.WithExitCode(cli.ExitRuntime, err)
+	}
+	sealConfig := localTPMSealConfigSnippet(ref, options.statePath, options.tpmDevice)
+	return tpmProvisionOutput{
+		StatePath:  options.statePath,
+		KeyID:      ref.String(),
+		PolicyMode: localMetadata.TPMPolicy.Mode,
+		Warnings:   []string{tpmlocal.RevocationWarning},
+		SealConfig: sealConfig,
+	}, nil
+}
+
+type tpmStatusOptions struct {
+	statePath  string
+	clusterID  string
+	keyID      string
+	keyVersion uint32
+	format     string
+}
+
+func tpmStatusCommand(args []string, stdout io.Writer, stderr io.Writer) error {
+	options, err := parseTPMStatusOptions(args, stderr)
+	if err != nil {
+		return err
+	}
+	ref := keyring.KeyRef{
+		ClusterID: options.clusterID,
+		KeyID:     options.keyID,
+		Version:   options.keyVersion,
+	}
+	status := tpmlocal.StatusLocal(options.statePath, ref)
+	out := tpmStatusOutput{
+		StatePath:  options.statePath,
+		Ready:      status.Ready,
+		KeyID:      ref.String(),
+		PolicyMode: status.Mode,
+		Warnings:   status.Warnings,
+		Errors:     status.Errors,
+	}
+	if !status.Ready {
+		return writeOutput(stdout, options.format, out, func() {
+			_, _ = fmt.Fprintf(stdout, "Local TPM state: %s\n", out.StatePath)
+			_, _ = fmt.Fprintf(stdout, "Ready: %t\n", out.Ready)
+			for _, warning := range out.Warnings {
+				_, _ = fmt.Fprintf(stdout, "Warning: %s\n", warning)
+			}
+			for _, statusErr := range out.Errors {
+				_, _ = fmt.Fprintf(stdout, "Error: %s\n", statusErr)
+			}
+		})
+	}
+	return writeOutput(stdout, options.format, out, func() {
+		_, _ = fmt.Fprintf(stdout, "Local TPM state: %s\n", out.StatePath)
+		_, _ = fmt.Fprintf(stdout, "Ready: %t\n", out.Ready)
+		_, _ = fmt.Fprintf(stdout, "Key: %s\n", out.KeyID)
+		_, _ = fmt.Fprintf(stdout, "Policy: %s\n", out.PolicyMode)
+		for _, warning := range out.Warnings {
+			_, _ = fmt.Fprintf(stdout, "Warning: %s\n", warning)
+		}
+	})
+}
+
+func parseTPMStatusOptions(args []string, stderr io.Writer) (tpmStatusOptions, error) {
+	flags := flag.NewFlagSet("tpm status", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	statePath := flags.String("state-path", "", "Local TPM state directory.")
+	clusterID := flags.String("cluster-id", "prod-eu1", "Cluster identifier.")
+	keyID := flags.String("key-id", "root", "Wrapping key identifier.")
+	keyVersion := flags.Uint("key-version", 1, "Wrapping key version.")
+	format := flags.String("format", formatText, "Output format: text or json.")
+	if err := flags.Parse(args); err != nil {
+		return tpmStatusOptions{}, cli.WithExitCode(cli.ExitUsage, err)
+	}
+	if err := validateFormat(*format); err != nil {
+		return tpmStatusOptions{}, err
+	}
+	if strings.TrimSpace(*statePath) == "" {
+		return tpmStatusOptions{}, cli.WithExitCode(cli.ExitUsage, errors.New("-state-path is required"))
+	}
+	parsedKeyVersion, err := parseKeyVersion(*keyVersion)
+	if err != nil {
+		return tpmStatusOptions{}, err
+	}
+	return tpmStatusOptions{
+		statePath:  *statePath,
+		clusterID:  strings.TrimSpace(*clusterID),
+		keyID:      strings.TrimSpace(*keyID),
+		keyVersion: parsedKeyVersion,
+		format:     *format,
+	}, nil
+}
+
 func recoverBeginCommand(args []string, stdout io.Writer, stderr io.Writer) error {
 	flags := flag.NewFlagSet("recover begin", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -1126,6 +1376,23 @@ type recoverFinishOutput struct {
 	SessionID string `json:"session_id"`
 }
 
+type tpmProvisionOutput struct {
+	StatePath  string   `json:"state_path"`
+	KeyID      string   `json:"key_id"`
+	PolicyMode string   `json:"policy_mode"`
+	Warnings   []string `json:"warnings"`
+	SealConfig string   `json:"seal_config"`
+}
+
+type tpmStatusOutput struct {
+	StatePath  string   `json:"state_path"`
+	Ready      bool     `json:"ready"`
+	KeyID      string   `json:"key_id"`
+	PolicyMode string   `json:"policy_mode,omitempty"`
+	Warnings   []string `json:"warnings,omitempty"`
+	Errors     []string `json:"errors,omitempty"`
+}
+
 type localTrustState struct {
 	SchemaVersion     uint32   `json:"schema_version"`
 	GrantID           string   `json:"grant_id"`
@@ -1198,6 +1465,56 @@ func parseOperations(raw string) ([]string, error) {
 		return nil, cli.WithExitCode(cli.ExitUsage, errors.New("at least one operation is required"))
 	}
 	return operations, nil
+}
+
+func validateTPMPolicyMode(mode string) (string, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case tpmlocal.PolicyModeTPMOnly, tpmlocal.PolicyModeSecureBoot:
+		return mode, nil
+	case tpmlocal.PolicyModeMeasured:
+		return "", cli.WithExitCode(cli.ExitUsage, errors.New("measured TPM policy is reserved for later milestones"))
+	default:
+		return "", cli.WithExitCode(cli.ExitUsage, fmt.Errorf("unsupported TPM policy %q", mode))
+	}
+}
+
+func parsePCRIndexes(raw string) ([]int, error) {
+	parts := strings.Split(raw, ",")
+	pcrs := make([]int, 0, len(parts))
+	seen := make(map[int]struct{})
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		pcr, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, cli.WithExitCode(cli.ExitUsage, fmt.Errorf("invalid PCR index %q", part))
+		}
+		if pcr < 0 || pcr > 23 {
+			return nil, cli.WithExitCode(cli.ExitUsage, fmt.Errorf("PCR index %d is out of range", pcr))
+		}
+		if _, ok := seen[pcr]; ok {
+			continue
+		}
+		seen[pcr] = struct{}{}
+		pcrs = append(pcrs, pcr)
+	}
+	if len(pcrs) == 0 {
+		return nil, cli.WithExitCode(cli.ExitUsage, errors.New("at least one PCR index is required"))
+	}
+	return pcrs, nil
+}
+
+func parseKeyVersion(value uint) (uint32, error) {
+	if value == 0 {
+		return 0, cli.WithExitCode(cli.ExitUsage, errors.New("-key-version must be greater than zero"))
+	}
+	if value > math.MaxUint32 {
+		return 0, cli.WithExitCode(cli.ExitUsage, errors.New("-key-version must fit in uint32"))
+	}
+	return uint32(value), nil
 }
 
 func writeOutput(stdout io.Writer, format string, value interface{}, writeText func()) error {
@@ -1315,6 +1632,17 @@ func sealConfigSnippet(clusterID string, keyID string) string {
 }`, clusterID, keyID)
 }
 
+func localTPMSealConfigSnippet(ref keyring.KeyRef, statePath string, tpmDevice string) string {
+	return fmt.Sprintf(`seal "attested-unseal" {
+  mode        = "local-tpm"
+  cluster_id  = %q
+  key_id      = %q
+  key_version = %q
+  state_path  = %q
+  tpm_device  = %q
+}`, ref.ClusterID, ref.KeyID, strconv.FormatUint(uint64(ref.Version), 10), statePath, tpmDevice)
+}
+
 func printUsage(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "Operator CLI for OpenBao attested unseal lifecycle tasks.")
 	_, _ = fmt.Fprintln(out)
@@ -1328,6 +1656,9 @@ func printUsage(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl recover enroll -state broker.db -package recovery.json \\")
 	_, _ = fmt.Fprintln(out, "    -shares-file shares.json -session session.json -request target-request.json")
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl recover finish -session session.json")
+	_, _ = fmt.Fprintln(out, "  bao-unsealctl tpm provision -state-path /var/lib/openbao-attested-unseal \\")
+	_, _ = fmt.Fprintln(out, "    -package recovery.json -shares-file shares.json")
+	_, _ = fmt.Fprintln(out, "  bao-unsealctl tpm status -state-path /var/lib/openbao-attested-unseal")
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl version")
 }
 
