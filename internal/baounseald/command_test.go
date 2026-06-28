@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dc-tec/openbao-attested-unseal/internal/cli"
-	"github.com/dc-tec/openbao-attested-unseal/internal/keyring"
-	"github.com/dc-tec/openbao-attested-unseal/internal/version"
+	"github.com/adfinis/openbao-attested-unseal/internal/cli"
+	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
+	"github.com/adfinis/openbao-attested-unseal/internal/version"
 )
 
 func TestConfigValidate(t *testing.T) {

@@ -5,7 +5,7 @@ enableRobotsTXT = true
 disableKinds = ["taxonomy", "term", "RSS"]
 
 [params]
-  repoURL = "https://github.com/dc-tec/openbao-attested-unseal"
+  repoURL = "https://github.com/adfinis/openbao-attested-unseal"
   defaultBranch = "main"
   repoLabel = "GitHub"
   productName = "openbao-attested-unseal"

@@ -12,9 +12,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/dc-tec/openbao-attested-unseal/internal/broker"
-	"github.com/dc-tec/openbao-attested-unseal/internal/cli"
-	"github.com/dc-tec/openbao-attested-unseal/internal/version"
+	"github.com/adfinis/openbao-attested-unseal/internal/broker"
+	"github.com/adfinis/openbao-attested-unseal/internal/cli"
+	"github.com/adfinis/openbao-attested-unseal/internal/version"
 )
 
 // Execute runs bao-unseald.

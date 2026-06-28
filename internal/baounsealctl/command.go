@@ -17,13 +17,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dc-tec/openbao-attested-unseal/internal/broker"
-	"github.com/dc-tec/openbao-attested-unseal/internal/cli"
-	"github.com/dc-tec/openbao-attested-unseal/internal/enrollment"
-	"github.com/dc-tec/openbao-attested-unseal/internal/keyring"
-	protocolv1 "github.com/dc-tec/openbao-attested-unseal/internal/protocol/v1"
-	"github.com/dc-tec/openbao-attested-unseal/internal/recovery"
-	"github.com/dc-tec/openbao-attested-unseal/internal/version"
+	"github.com/adfinis/openbao-attested-unseal/internal/broker"
+	"github.com/adfinis/openbao-attested-unseal/internal/cli"
+	"github.com/adfinis/openbao-attested-unseal/internal/enrollment"
+	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
+	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
+	"github.com/adfinis/openbao-attested-unseal/internal/recovery"
+	"github.com/adfinis/openbao-attested-unseal/internal/version"
 )
 
 const (

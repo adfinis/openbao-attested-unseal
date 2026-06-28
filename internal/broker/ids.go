@@ -7,7 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	protocolv1 "github.com/dc-tec/openbao-attested-unseal/internal/protocol/v1"
+	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	"google.golang.org/protobuf/proto"
 )
 

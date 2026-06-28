@@ -3,7 +3,7 @@ package kmsplugin
 import (
 	"context"
 
-	"github.com/dc-tec/openbao-attested-unseal/internal/keyring"
+	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 )
 
 // InMemoryBackend is a unit-test backend backed by the local keyring primitive.

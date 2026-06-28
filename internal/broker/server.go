@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	protocolv1 "github.com/dc-tec/openbao-attested-unseal/internal/protocol/v1"
+	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )

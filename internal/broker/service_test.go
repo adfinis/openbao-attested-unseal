@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dc-tec/openbao-attested-unseal/internal/keyring"
-	protocolv1 "github.com/dc-tec/openbao-attested-unseal/internal/protocol/v1"
+	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
+	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"

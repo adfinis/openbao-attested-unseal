@@ -1,4 +1,4 @@
-module github.com/dc-tec/openbao-attested-unseal
+module github.com/adfinis/openbao-attested-unseal
 
 go 1.26.4
 

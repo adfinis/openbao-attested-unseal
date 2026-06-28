@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dc-tec/openbao-attested-unseal/internal/keyring"
+	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 	wrapping "github.com/openbao/go-kms-wrapping/v2"
 )
 

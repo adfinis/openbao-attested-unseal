@@ -29,7 +29,7 @@ VERSION ?= 0.0.0-dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf '%s' unknown)
 BUILD_DATE ?= $(shell if [ -n "$${SOURCE_DATE_EPOCH:-}" ]; then date -u -r "$${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ; else date -u +%Y-%m-%dT%H:%M:%SZ; fi)
 DIRTY ?= $(shell if [ -n "$$(git status --porcelain 2>/dev/null)" ]; then printf '%s' true; else printf '%s' false; fi)
-VERSION_PKG := github.com/dc-tec/openbao-attested-unseal/internal/version
+VERSION_PKG := github.com/adfinis/openbao-attested-unseal/internal/version
 GO_BUILD_FLAGS ?= -trimpath -buildvcs=false
 LDFLAGS := -s -w -X $(VERSION_PKG).version=$(VERSION) -X $(VERSION_PKG).commit=$(COMMIT) -X $(VERSION_PKG).buildDate=$(BUILD_DATE) -X $(VERSION_PKG).dirty=$(DIRTY)
 
@@ -42,7 +42,7 @@ BUF_VERSION ?= v1.71.0
 PROTOC_GEN_GO_VERSION ?= v1.36.11
 PROTOC_GEN_GO_GRPC_VERSION ?= v1.6.2
 GO_LICENSES_ALLOWED ?= Apache-2.0 BSD-2-Clause BSD-3-Clause ISC MIT MPL-2.0 Unicode-DFS-2016
-GO_LICENSES_IGNORE ?= github.com/dc-tec/openbao-attested-unseal
+GO_LICENSES_IGNORE ?= github.com/adfinis/openbao-attested-unseal
 GO_LICENSES_PACKAGE_TARGETS ?= ./cmd/bao-kms-unseal ./cmd/bao-unseald ./cmd/bao-unsealctl
 LICENSE_REPORT_DIR ?= dist/licenses
 go_licenses_empty :=
@@ -52,5 +52,5 @@ GO_LICENSES_ALLOWED_CSV := $(subst $(go_licenses_space),$(go_licenses_comma),$(s
 
 HUGO_VERSION ?= v0.151.2
 HUGO_RUN := GOFLAGS="-mod=mod" "$(GO)" run github.com/gohugoio/hugo@$(HUGO_VERSION)
-DOCS_BASE_URL ?= https://dc-tec.github.io/openbao-attested-unseal/
+DOCS_BASE_URL ?= https://adfinis.github.io/openbao-attested-unseal/
 DOCS_OUT ?= public

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package openbao.attestedunseal.v1;
 
-option go_package = "github.com/dc-tec/openbao-attested-unseal/internal/protocol/v1;protocolv1";
+option go_package = "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1;protocolv1";
 
 service UnsealService {
   rpc Challenge(ChallengeRequest) returns (ChallengeResponse);

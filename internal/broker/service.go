@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dc-tec/openbao-attested-unseal/internal/keyring"
-	protocolv1 "github.com/dc-tec/openbao-attested-unseal/internal/protocol/v1"
+	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
+	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	wrapping "github.com/openbao/go-kms-wrapping/v2"
 	"google.golang.org/grpc/peer"
 )

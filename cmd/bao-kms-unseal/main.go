@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dc-tec/openbao-attested-unseal/internal/cli"
-	"github.com/dc-tec/openbao-attested-unseal/internal/command"
-	"github.com/dc-tec/openbao-attested-unseal/internal/kmsplugin"
-	"github.com/dc-tec/openbao-attested-unseal/internal/version"
+	"github.com/adfinis/openbao-attested-unseal/internal/cli"
+	"github.com/adfinis/openbao-attested-unseal/internal/command"
+	"github.com/adfinis/openbao-attested-unseal/internal/kmsplugin"
+	"github.com/adfinis/openbao-attested-unseal/internal/version"
 )
 
 func main() {

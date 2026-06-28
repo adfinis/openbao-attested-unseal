@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	protocolv1 "github.com/dc-tec/openbao-attested-unseal/internal/protocol/v1"
+	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutmetric"
@@ -16,7 +16,7 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
-const instrumentationName = "github.com/dc-tec/openbao-attested-unseal/internal/broker"
+const instrumentationName = "github.com/adfinis/openbao-attested-unseal/internal/broker"
 
 // Telemetry contains broker OpenTelemetry hooks without installing an exporter.
 type Telemetry struct {

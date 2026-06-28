@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dc-tec/openbao-attested-unseal/internal/keyring"
+	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 )
 
 const (

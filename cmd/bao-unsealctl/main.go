@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dc-tec/openbao-attested-unseal/internal/baounsealctl"
-	"github.com/dc-tec/openbao-attested-unseal/internal/cli"
-	"github.com/dc-tec/openbao-attested-unseal/internal/version"
+	"github.com/adfinis/openbao-attested-unseal/internal/baounsealctl"
+	"github.com/adfinis/openbao-attested-unseal/internal/cli"
+	"github.com/adfinis/openbao-attested-unseal/internal/version"
 )
 
 func main() {

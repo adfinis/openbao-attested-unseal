@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/dc-tec/openbao-attested-unseal/internal/keyring"
-	protocolv1 "github.com/dc-tec/openbao-attested-unseal/internal/protocol/v1"
+	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
+	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	_ "modernc.org/sqlite"
 )
 

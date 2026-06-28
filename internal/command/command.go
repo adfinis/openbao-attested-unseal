@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/dc-tec/openbao-attested-unseal/internal/cli"
-	"github.com/dc-tec/openbao-attested-unseal/internal/version"
+	"github.com/adfinis/openbao-attested-unseal/internal/cli"
+	"github.com/adfinis/openbao-attested-unseal/internal/version"
 )
 
 // Metadata describes one command binary.

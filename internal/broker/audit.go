@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	protocolv1 "github.com/dc-tec/openbao-attested-unseal/internal/protocol/v1"
+	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 )
 
 // AuditEvent is one append-only broker security audit record.
