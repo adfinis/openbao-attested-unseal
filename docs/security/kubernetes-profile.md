@@ -6,8 +6,9 @@ Last reviewed: 2026-06-29
 
 This profile describes the first Kubernetes-oriented broker mode. It combines
 Kubernetes workload identity with node evidence already trusted by the broker.
-It is intended for the beta project shape and does not yet include production
-manifests, RBAC examples, or a real node attestation agent.
+It is intended for the beta project shape. The repository includes beta RBAC
+and deployment manifests, but they still need production hardening and a real
+node attestation agent.
 
 See [Kubernetes Profile Examples](../reference/kubernetes-profile.md) for
 configuration snippets and
@@ -169,7 +170,7 @@ Current tests cover:
 
 This profile does not yet provide:
 
-- Kubernetes RBAC or deployment manifests;
+- production-hardened Kubernetes packaging;
 - a production node attestation agent;
 - SPIFFE/SPIRE SVID verification;
 - AWS, Azure, or Google trusted-launch verification;

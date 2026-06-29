@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openbao
+  labels:
+    app.kubernetes.io/name: openbao-attested-unseal
+    app.kubernetes.io/part-of: openbao
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bao-unseald
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: bao-unseald
+    app.kubernetes.io/part-of: openbao-attested-unseal
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openbao
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: openbao
+    app.kubernetes.io/part-of: openbao-attested-unseal
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: openbao-attested-unseal-tokenreviewer
+  labels:
+    app.kubernetes.io/name: bao-unseald
+    app.kubernetes.io/part-of: openbao-attested-unseal
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openbao-attested-unseal-tokenreviewer
+  labels:
+    app.kubernetes.io/name: bao-unseald
+    app.kubernetes.io/part-of: openbao-attested-unseal
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: openbao-attested-unseal-tokenreviewer
+subjects:
+  - kind: ServiceAccount
+    name: bao-unseald
+    namespace: openbao
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openbao-attested-unseal-pod-reader
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: bao-unseald
+    app.kubernetes.io/part-of: openbao-attested-unseal
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openbao-attested-unseal-pod-reader
+  namespace: openbao
+  labels:
+    app.kubernetes.io/name: bao-unseald
+    app.kubernetes.io/part-of: openbao-attested-unseal
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openbao-attested-unseal-pod-reader
+subjects:
+  - kind: ServiceAccount
+    name: bao-unseald
+    namespace: openbao

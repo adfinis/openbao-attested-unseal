@@ -8,6 +8,10 @@ These examples show the current Kubernetes runtime profile contract for
 `bao-unseald`. They are intentionally beta examples, not production deployment
 manifests.
 
+The tracked Kubernetes manifests live under
+[`deploy/kubernetes`](../../deploy/kubernetes/README.md). The RBAC manifest is
+covered by the kind e2e test.
+
 ## Current Boundary
 
 The broker can verify Kubernetes workload evidence when it receives an evidence

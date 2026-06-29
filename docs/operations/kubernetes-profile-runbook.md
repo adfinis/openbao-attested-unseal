@@ -57,9 +57,11 @@ The broker needs Kubernetes API access for:
 - `authentication.k8s.io/v1` TokenReview;
 - core/v1 Pod `get` for the configured namespace and OpenBao Pod name.
 
-Until manifests are added, RBAC should be treated as deployment-specific. The
-eventual production shape should grant the broker only the TokenReview
-permission and Pod read access needed for the OpenBao namespace.
+The beta RBAC manifest in `deploy/kubernetes/rbac.yaml` grants exactly those
+permissions to the `openbao/bao-unseald` service account. The kind e2e test
+applies that manifest and verifies that the service account can create a
+TokenReview and read the OpenBao Pod, without granting broad Pod permissions
+outside the OpenBao namespace.
 
 ## Node Evidence Freshness
 
@@ -127,6 +129,7 @@ provider.
 
 ## Current Gaps
 
-- Production Kubernetes RBAC and manifests are not included yet.
+- The tracked Kubernetes manifests are beta/lab examples and need production
+  hardening.
 - There is no production node attestation agent yet.
 - `fake-local` node evidence is for tests and local development only.
