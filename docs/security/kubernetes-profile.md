@@ -91,7 +91,8 @@ The broker `kubernetes` block enables this profile:
     "service_account": "openbao",
     "node_evidence_ttl_seconds": 300,
     "api_timeout_seconds": 10,
-    "allow_unbound_service_account_tokens": false
+    "allow_unbound_service_account_tokens": false,
+    "allow_fake_node_evidence_publish": false
   }
 }
 ```
@@ -112,7 +113,7 @@ The broker policy uses these node evidence fields:
 | `cluster_id` | Binds evidence to one OpenBao cluster. |
 | `node_name` | Correlates workload placement with evidence. |
 | `node_uid` | Optional stronger match against TokenReview node UID. |
-| `provider` | Identifies the node evidence profile. |
+| `provider` / `provider_id` | Identifies the node evidence profile. |
 | `evidence_hash` | Auditable digest or fixture identifier. |
 | `collected_at` | Evidence freshness start time. |
 | `expires_at` | Evidence freshness end time. |
@@ -164,7 +165,9 @@ Current tests cover:
 - denial on pod UID mismatch and node mismatch;
 - runtime broker wiring against a fake Kubernetes API server;
 - policy allow, stale evidence denial, and node UID mismatch using
-  fake/local node evidence fixtures.
+  fake/local node evidence fixtures;
+- broker admin publish/list APIs and `bao-unsealctl k8s publish-node` for
+  synthetic local node evidence.
 
 ## Unsupported Claims
 

@@ -80,6 +80,21 @@ For example:
 The fake/local fixture path is useful for testing this behavior but is not a
 security control.
 
+During local or kind testing, seed fake node evidence explicitly:
+
+```sh
+bao-unsealctl k8s publish-node \
+  -addr 127.0.0.1:8443 \
+  -plaintext \
+  -cluster-id prod-eu1 \
+  -node-name kind-worker
+```
+
+Use `-ttl` to shorten stale-evidence tests. The fake publish path stores
+evidence only in the running broker process; restart the broker and the record
+is gone. The broker must have `allow_fake_node_evidence_publish` enabled for
+this command to succeed.
+
 ## Revocation
 
 Use broker subject revocation when a workload identity should stop using the

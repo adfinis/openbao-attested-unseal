@@ -617,16 +617,3 @@ func (RecoveryStub) Status(
 		Message:     "recovery enrollment is available through bao-unsealctl",
 	}, nil
 }
-
-// AdminStub defines but does not implement admin APIs beyond status.
-type AdminStub struct {
-	protocolv1.UnimplementedAdminServiceServer
-}
-
-// Status reports that admin APIs are intentionally not implemented in M2.
-func (AdminStub) Status(context.Context, *protocolv1.AdminStatusRequest) (*protocolv1.AdminStatusResponse, error) {
-	return &protocolv1.AdminStatusResponse{
-		Implemented: false,
-		Message:     "admin APIs are not implemented in milestone 2",
-	}, nil
-}

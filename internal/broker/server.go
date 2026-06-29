@@ -62,7 +62,7 @@ func NewRuntime(ctx context.Context, config Config) (*Runtime, error) {
 		_ = store.Close()
 		return nil, err
 	}
-	server, err := NewGRPCServer(config, serviceDeps.Service)
+	server, err := NewGRPCServer(config, serviceDeps.Service, serviceDeps.NodeEvidence)
 	if err != nil {
 		_ = telemetry.Shutdown(ctx)
 		_ = store.Close()
@@ -124,7 +124,7 @@ func ListenAndServe(ctx context.Context, config Config) error {
 }
 
 // NewGRPCServer builds a broker gRPC server.
-func NewGRPCServer(config Config, service *Service) (*grpc.Server, error) {
+func NewGRPCServer(config Config, service *Service, nodeEvidence *MemoryNodeEvidenceCache) (*grpc.Server, error) {
 	options, err := grpcServerOptions(config)
 	if err != nil {
 		return nil, err
@@ -133,7 +133,10 @@ func NewGRPCServer(config Config, service *Service) (*grpc.Server, error) {
 	protocolv1.RegisterUnsealServiceServer(server, service)
 	protocolv1.RegisterEnrollmentServiceServer(server, EnrollmentStub{})
 	protocolv1.RegisterRecoveryServiceServer(server, RecoveryStub{})
-	protocolv1.RegisterAdminServiceServer(server, AdminStub{})
+	protocolv1.RegisterAdminServiceServer(
+		server,
+		NewAdminService(nodeEvidence, config.Policy(), config.Kubernetes.AllowFakeNodeEvidencePublish),
+	)
 	return server, nil
 }
 

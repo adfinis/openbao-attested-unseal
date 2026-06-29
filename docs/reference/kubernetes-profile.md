@@ -59,7 +59,8 @@ service environment and uses the mounted service account token and CA file.
     "service_account": "openbao",
     "node_evidence_ttl_seconds": 300,
     "api_timeout_seconds": 10,
-    "allow_unbound_service_account_tokens": false
+    "allow_unbound_service_account_tokens": false,
+    "allow_fake_node_evidence_publish": false
   }
 }
 ```
@@ -81,7 +82,8 @@ cluster or against a fake API server.
     "service_account": "openbao",
     "node_evidence_ttl_seconds": 30,
     "api_timeout_seconds": 5,
-    "allow_unbound_service_account_tokens": false
+    "allow_unbound_service_account_tokens": false,
+    "allow_fake_node_evidence_publish": false
   }
 }
 ```
@@ -124,6 +126,22 @@ The current fake/local node evidence fixture shape is:
 `fake-local` evidence only exercises broker policy behavior. It does not prove
 TPM identity, Secure Boot, measured boot, confidential launch, or platform
 anti-cloning.
+
+For local broker tests, publish synthetic node evidence through the broker
+admin API:
+
+```sh
+bao-unsealctl k8s publish-node \
+  -addr 127.0.0.1:8443 \
+  -plaintext \
+  -cluster-id prod-eu1 \
+  -node-name kind-worker
+```
+
+The current admin publish path writes to the broker's process-local node
+evidence cache and requires `allow_fake_node_evidence_publish = true` in the
+broker Kubernetes config. Evidence is lost when the broker restarts and is not
+a durable diagnostic API.
 
 ## OpenBao Seal Config
 

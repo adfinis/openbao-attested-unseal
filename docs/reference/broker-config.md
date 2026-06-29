@@ -29,7 +29,8 @@
     "service_account": "openbao",
     "node_evidence_ttl_seconds": 300,
     "api_timeout_seconds": 10,
-    "allow_unbound_service_account_tokens": false
+    "allow_unbound_service_account_tokens": false,
+    "allow_fake_node_evidence_publish": false
   }
 }
 ```
@@ -52,6 +53,11 @@ evidence freshness window. Pod-bound service account tokens are required unless
 `allow_unbound_service_account_tokens` is explicitly set to `true`. With
 pod-bound tokens, the broker also performs an independent Pod API lookup and
 rejects evidence if the token pod UID or node name does not match the live Pod.
+
+`allow_fake_node_evidence_publish` enables the temporary `fake-local` admin
+publish path used by kind and local labs. Leave it disabled outside test
+deployments; production node evidence should come from an authenticated node
+attestation publisher.
 
 See [Kubernetes Profile Examples](kubernetes-profile.md) for the beta
 Kubernetes profile contract and plugin evidence settings.

@@ -10,6 +10,7 @@ data:
   broker.json: |
     {
       "listen_address": "0.0.0.0:8443",
+      "allow_plaintext_for_tests": true,
       "sqlite_path": "/var/lib/openbao-attested-unseal/broker.db",
       "audit_file_path": "/var/log/openbao-attested-unseal/audit.jsonl",
       "otel_exporter": "none",
@@ -26,7 +27,8 @@ data:
         "service_account": "openbao",
         "node_evidence_ttl_seconds": 300,
         "api_timeout_seconds": 10,
-        "allow_unbound_service_account_tokens": false
+        "allow_unbound_service_account_tokens": false,
+        "allow_fake_node_evidence_publish": true
       }
     }
   default-policy.json: |

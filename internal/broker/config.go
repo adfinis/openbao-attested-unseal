@@ -67,6 +67,7 @@ type KubernetesConfig struct {
 	NodeEvidenceTTLSeconds           int64  `json:"node_evidence_ttl_seconds"`
 	APITimeoutSeconds                int64  `json:"api_timeout_seconds"`
 	AllowUnboundServiceAccountTokens bool   `json:"allow_unbound_service_account_tokens"`
+	AllowFakeNodeEvidencePublish     bool   `json:"allow_fake_node_evidence_publish"`
 }
 
 // PolicyDocument is the M2 default policy file format.

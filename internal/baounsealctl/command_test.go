@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -640,6 +641,50 @@ func TestLocalTPMRevokeRequiresRotationPlanAndWarns(t *testing.T) {
 	}
 }
 
+func TestK8sPublishNodeJSON(t *testing.T) {
+	address, cache := startAdminBrokerTestServer(t)
+
+	var out k8sPublishNodeOutput
+	runJSON(t, &out,
+		"k8s", "publish-node",
+		"-addr", address,
+		"-plaintext",
+		"-cluster-id", "prod-eu1",
+		"-node-name", "kind-worker",
+		"-node-uid", "node-uid",
+		"-ttl", "1m",
+		"-format", "json",
+	)
+	if out.Decision != "allow" || out.Status != "fresh" {
+		t.Fatalf("publish output = %#v, want allow/fresh", out)
+	}
+	if out.ProviderID != kubernetesProviderFakeLocal {
+		t.Fatalf("provider_id = %q, want %q", out.ProviderID, kubernetesProviderFakeLocal)
+	}
+	if out.EvidenceHash == "" || out.CollectedAt == "" || out.ExpiresAt == "" {
+		t.Fatalf("publish output is missing evidence metadata: %#v", out)
+	}
+
+	evidence, err := cache.NodeEvidence(context.Background(), "prod-eu1", "kind-worker")
+	if err != nil {
+		t.Fatalf("NodeEvidence returned error: %v", err)
+	}
+	if evidence.NodeUID != "node-uid" || evidence.Provider != kubernetesProviderFakeLocal {
+		t.Fatalf("cached evidence = %#v, want node-uid fake-local", evidence)
+	}
+}
+
+func TestK8sPublishNodeRequiresNodeName(t *testing.T) {
+	err := runCommand(
+		"k8s", "publish-node",
+		"-addr", "127.0.0.1:8443",
+		"-plaintext",
+	)
+	if got := cli.ProcessExitCode(err); got != int(cli.ExitUsage) {
+		t.Fatalf("exit code = %d, want %d", got, cli.ExitUsage)
+	}
+}
+
 func TestUnsafeLocalFilePermissionsRejected(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "broker.db")
@@ -840,6 +885,40 @@ func runCommand(args ...string) error {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	return Execute(version.Info{Version: "test"}, args, &stdout, &stderr)
+}
+
+func startAdminBrokerTestServer(t *testing.T) (string, *broker.MemoryNodeEvidenceCache) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen returned error: %v", err)
+	}
+	config := broker.Config{
+		AllowPlaintextForTests: true,
+		PolicyID:               "development",
+		Kubernetes: broker.KubernetesConfig{
+			AllowFakeNodeEvidencePublish: true,
+		},
+	}
+	cache := broker.NewMemoryNodeEvidenceCache()
+	service := broker.NewService(config, nil, nil, nil)
+	server, err := broker.NewGRPCServer(config, service, cache)
+	if err != nil {
+		t.Fatalf("NewGRPCServer returned error: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		server.Stop()
+		_ = listener.Close()
+		select {
+		case <-errCh:
+		default:
+		}
+	})
+	return listener.Addr().String(), cache
 }
 
 type openBAORotationTestServer struct {

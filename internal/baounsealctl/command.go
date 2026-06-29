@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -31,18 +32,22 @@ import (
 	"github.com/adfinis/openbao-attested-unseal/internal/recovery"
 	tpmlocal "github.com/adfinis/openbao-attested-unseal/internal/tpm"
 	"github.com/adfinis/openbao-attested-unseal/internal/version"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
 	formatText = "text"
 	formatJSON = "json"
 
-	approvalModeSingleOperator = "single-operator"
-	approvalModeQuorum         = "quorum"
-	commandStatus              = "status"
-	operationRevoke            = "OPERATION_REVOKE"
-	revocationModeBroker       = "broker"
-	revocationModeLocalTPM     = "local-tpm"
+	approvalModeSingleOperator  = "single-operator"
+	approvalModeQuorum          = "quorum"
+	commandStatus               = "status"
+	kubernetesProviderFakeLocal = "fake-local"
+	operationRevoke             = "OPERATION_REVOKE"
+	revocationModeBroker        = "broker"
+	revocationModeLocalTPM      = "local-tpm"
 )
 
 // Execute runs bao-unsealctl.
@@ -73,6 +78,8 @@ func Execute(info version.Info, args []string, stdout io.Writer, stderr io.Write
 		return rotateCommand(args[1:], stdout, stderr)
 	case "revoke":
 		return revokeCommand(args[1:], stdout, stderr)
+	case "k8s":
+		return k8sCommand(args[1:], stdout, stderr)
 	case "tpm":
 		return tpmCommand(args[1:], stdout, stderr)
 	default:
@@ -1490,6 +1497,265 @@ func revokeStatusCommand(args []string, stdout io.Writer, stderr io.Writer) erro
 	})
 }
 
+func k8sCommand(args []string, stdout io.Writer, stderr io.Writer) error {
+	if len(args) == 0 {
+		return cli.WithExitCode(cli.ExitUsage, errors.New("expected k8s subcommand"))
+	}
+	switch args[0] {
+	case "publish-node":
+		return k8sPublishNodeCommand(args[1:], stdout, stderr)
+	default:
+		return cli.WithExitCode(cli.ExitUsage, fmt.Errorf("unknown k8s subcommand %q", args[0]))
+	}
+}
+
+type k8sPublishNodeOptions struct {
+	address        string
+	plaintext      bool
+	caCertPath     string
+	tlsServerName  string
+	clientCertPath string
+	clientKeyPath  string
+	clusterID      string
+	nodeName       string
+	nodeUID        string
+	providerID     string
+	evidenceHash   string
+	ttl            time.Duration
+	timeout        time.Duration
+	format         string
+}
+
+func k8sPublishNodeCommand(args []string, stdout io.Writer, stderr io.Writer) error {
+	options, err := parseK8sPublishNodeOptions(args, stderr)
+	if err != nil {
+		return err
+	}
+	out, err := publishK8sNodeEvidence(options)
+	if err != nil {
+		return err
+	}
+	return writeOutput(stdout, options.format, out, func() {
+		_, _ = fmt.Fprintf(stdout, "Published node evidence for %s\n", out.NodeName)
+		_, _ = fmt.Fprintf(stdout, "Cluster: %s\n", out.ClusterID)
+		_, _ = fmt.Fprintf(stdout, "Provider: %s\n", out.ProviderID)
+		_, _ = fmt.Fprintf(stdout, "Status: %s\n", out.Status)
+		_, _ = fmt.Fprintf(stdout, "Decision: %s\n", out.Decision)
+	})
+}
+
+func parseK8sPublishNodeOptions(args []string, stderr io.Writer) (k8sPublishNodeOptions, error) {
+	flags := flag.NewFlagSet("k8s publish-node", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	address := flags.String("addr", envOrDefault("BAO_UNSEALD_ADDR", "127.0.0.1:8443"), "bao-unseald gRPC address.")
+	plaintext := flags.Bool("plaintext", false, "Use plaintext gRPC for local kind/lab deployments.")
+	caCertPath := flags.String("ca-cert", "", "Optional PEM CA certificate for broker TLS.")
+	tlsServerName := flags.String("tls-server-name", "", "Optional TLS server name override.")
+	clientCertPath := flags.String("client-cert", "", "Optional PEM client certificate for broker mTLS.")
+	clientKeyPath := flags.String("client-key", "", "Optional PEM client key for broker mTLS.")
+	clusterID := flags.String("cluster-id", "prod-eu1", "Cluster identifier.")
+	nodeName := flags.String("node-name", "", "Kubernetes node name.")
+	nodeUID := flags.String("node-uid", "", "Optional Kubernetes node UID.")
+	providerID := flags.String("provider-id", kubernetesProviderFakeLocal, "Node evidence provider identifier.")
+	evidenceHash := flags.String("evidence-hash", "", "Optional synthetic evidence hash.")
+	ttl := flags.Duration("ttl", broker.DefaultKubernetesNodeEvidenceTTL, "Node evidence TTL.")
+	timeout := flags.Duration("timeout", broker.DefaultKubernetesAPITimeout, "Broker request timeout.")
+	format := flags.String("format", formatText, "Output format: text or json.")
+	if err := flags.Parse(args); err != nil {
+		return k8sPublishNodeOptions{}, cli.WithExitCode(cli.ExitUsage, err)
+	}
+	if err := validateFormat(*format); err != nil {
+		return k8sPublishNodeOptions{}, err
+	}
+	if strings.TrimSpace(*address) == "" ||
+		strings.TrimSpace(*clusterID) == "" ||
+		strings.TrimSpace(*nodeName) == "" {
+		return k8sPublishNodeOptions{}, cli.WithExitCode(
+			cli.ExitUsage,
+			errors.New("-addr, -cluster-id, and -node-name are required"),
+		)
+	}
+	if strings.TrimSpace(*providerID) == "" {
+		return k8sPublishNodeOptions{}, cli.WithExitCode(cli.ExitUsage, errors.New("-provider-id is required"))
+	}
+	if *ttl <= 0 {
+		return k8sPublishNodeOptions{}, cli.WithExitCode(cli.ExitUsage, errors.New("-ttl must be greater than zero"))
+	}
+	if *timeout <= 0 {
+		return k8sPublishNodeOptions{}, cli.WithExitCode(cli.ExitUsage, errors.New("-timeout must be greater than zero"))
+	}
+	if (strings.TrimSpace(*clientCertPath) == "") != (strings.TrimSpace(*clientKeyPath) == "") {
+		return k8sPublishNodeOptions{}, cli.WithExitCode(
+			cli.ExitUsage,
+			errors.New("-client-cert and -client-key must be provided together"),
+		)
+	}
+	return k8sPublishNodeOptions{
+		address:        strings.TrimSpace(*address),
+		plaintext:      *plaintext,
+		caCertPath:     strings.TrimSpace(*caCertPath),
+		tlsServerName:  strings.TrimSpace(*tlsServerName),
+		clientCertPath: strings.TrimSpace(*clientCertPath),
+		clientKeyPath:  strings.TrimSpace(*clientKeyPath),
+		clusterID:      strings.TrimSpace(*clusterID),
+		nodeName:       strings.TrimSpace(*nodeName),
+		nodeUID:        strings.TrimSpace(*nodeUID),
+		providerID:     strings.TrimSpace(*providerID),
+		evidenceHash:   strings.TrimSpace(*evidenceHash),
+		ttl:            *ttl,
+		timeout:        *timeout,
+		format:         *format,
+	}, nil
+}
+
+func publishK8sNodeEvidence(options k8sPublishNodeOptions) (k8sPublishNodeOutput, error) {
+	dialOptions, err := brokerAdminDialOptions(options)
+	if err != nil {
+		return k8sPublishNodeOutput{}, cli.WithExitCode(cli.ExitConfig, err)
+	}
+	conn, err := grpc.NewClient(options.address, dialOptions...)
+	if err != nil {
+		return k8sPublishNodeOutput{}, cli.WithExitCode(cli.ExitConfig, fmt.Errorf("create broker client: %w", err))
+	}
+	defer func() { _ = conn.Close() }()
+
+	now := time.Now().UTC()
+	evidenceHash := options.evidenceHash
+	if evidenceHash == "" {
+		evidenceHash = defaultK8sEvidenceHash(options)
+	}
+	ctx, cancel := context.WithTimeout(cli.ProcessContext(), options.timeout)
+	defer cancel()
+	client := protocolv1.NewAdminServiceClient(conn)
+	response, err := client.PublishNodeEvidence(ctx, &protocolv1.NodeEvidencePublishRequest{
+		Evidence: &protocolv1.NodeEvidenceRecord{
+			ClusterId:            options.clusterID,
+			NodeName:             options.nodeName,
+			NodeUid:              options.nodeUID,
+			ProviderId:           options.providerID,
+			EvidenceHash:         evidenceHash,
+			CollectedUnixSeconds: now.Unix(),
+			ExpiresUnixSeconds:   now.Add(options.ttl).Unix(),
+		},
+	})
+	if err != nil {
+		return k8sPublishNodeOutput{}, cli.WithExitCode(cli.ExitRuntime, fmt.Errorf("publish node evidence: %w", err))
+	}
+	if err := requireAllowDecision(response.GetDecision(), "publish node evidence"); err != nil {
+		return k8sPublishNodeOutput{}, cli.WithExitCode(cli.ExitCheckFailed, err)
+	}
+	return k8sPublishNodeOutputFromProto(response.GetEvidence(), response.GetDecision()), nil
+}
+
+func brokerAdminDialOptions(options k8sPublishNodeOptions) ([]grpc.DialOption, error) {
+	if options.plaintext {
+		return []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}, nil
+	}
+	tlsConfig := &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		ServerName: options.tlsServerName,
+	}
+	if options.caCertPath != "" {
+		pool, err := x509.SystemCertPool()
+		if err != nil {
+			pool = x509.NewCertPool()
+		}
+		// #nosec G304 -- broker CA path is operator supplied.
+		caPEM, err := os.ReadFile(options.caCertPath)
+		if err != nil {
+			return nil, fmt.Errorf("read broker CA certificate: %w", err)
+		}
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, errors.New("broker CA certificate did not contain a PEM certificate")
+		}
+		tlsConfig.RootCAs = pool
+	}
+	if options.clientCertPath != "" {
+		cert, err := tls.LoadX509KeyPair(options.clientCertPath, options.clientKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load broker client certificate: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{cert}
+	}
+	return []grpc.DialOption{grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))}, nil
+}
+
+func requireAllowDecision(decision *protocolv1.PolicyDecision, operation string) error {
+	if decision.GetState() == protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW {
+		return nil
+	}
+	messages := make([]string, 0, len(decision.GetErrors()))
+	for _, brokerErr := range decision.GetErrors() {
+		if brokerErr.GetMessage() != "" {
+			messages = append(messages, brokerErr.GetMessage())
+		}
+	}
+	if len(messages) == 0 {
+		return fmt.Errorf("broker denied %s", operation)
+	}
+	return fmt.Errorf("broker denied %s: %s", operation, strings.Join(messages, "; "))
+}
+
+func defaultK8sEvidenceHash(options k8sPublishNodeOptions) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		options.clusterID,
+		options.nodeName,
+		options.nodeUID,
+		options.providerID,
+	}, "\x00")))
+	return hex.EncodeToString(sum[:])
+}
+
+func k8sPublishNodeOutputFromProto(
+	evidence *protocolv1.NodeEvidenceRecord,
+	decision *protocolv1.PolicyDecision,
+) k8sPublishNodeOutput {
+	return k8sPublishNodeOutput{
+		ClusterID:    evidence.GetClusterId(),
+		NodeName:     evidence.GetNodeName(),
+		NodeUID:      evidence.GetNodeUid(),
+		ProviderID:   evidence.GetProviderId(),
+		EvidenceHash: evidence.GetEvidenceHash(),
+		CollectedAt:  unixSecondsOutput(evidence.GetCollectedUnixSeconds()),
+		ExpiresAt:    unixSecondsOutput(evidence.GetExpiresUnixSeconds()),
+		Status:       nodeEvidenceStatusOutput(evidence.GetStatus()),
+		Decision:     policyDecisionOutput(decision.GetState()),
+	}
+}
+
+func unixSecondsOutput(value int64) string {
+	if value <= 0 {
+		return ""
+	}
+	return time.Unix(value, 0).UTC().Format(time.RFC3339)
+}
+
+func nodeEvidenceStatusOutput(status protocolv1.NodeEvidenceStatus) string {
+	switch status {
+	case protocolv1.NodeEvidenceStatus_NODE_EVIDENCE_STATUS_FRESH:
+		return "fresh"
+	case protocolv1.NodeEvidenceStatus_NODE_EVIDENCE_STATUS_STALE:
+		return "stale"
+	case protocolv1.NodeEvidenceStatus_NODE_EVIDENCE_STATUS_MISSING:
+		return "missing"
+	case protocolv1.NodeEvidenceStatus_NODE_EVIDENCE_STATUS_INVALID:
+		return "invalid"
+	default:
+		return "unspecified"
+	}
+}
+
+func policyDecisionOutput(state protocolv1.PolicyDecisionState) string {
+	switch state {
+	case protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW:
+		return "allow"
+	case protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_DENY:
+		return "deny"
+	default:
+		return "unspecified"
+	}
+}
+
 func tpmCommand(args []string, stdout io.Writer, stderr io.Writer) error {
 	if len(args) == 0 {
 		return cli.WithExitCode(cli.ExitUsage, errors.New("expected tpm subcommand"))
@@ -2328,6 +2594,18 @@ type revokeStatusOutput struct {
 	Revoked   bool   `json:"revoked"`
 }
 
+type k8sPublishNodeOutput struct {
+	ClusterID    string `json:"cluster_id"`
+	NodeName     string `json:"node_name"`
+	NodeUID      string `json:"node_uid,omitempty"`
+	ProviderID   string `json:"provider_id"`
+	EvidenceHash string `json:"evidence_hash"`
+	CollectedAt  string `json:"collected_at"`
+	ExpiresAt    string `json:"expires_at"`
+	Status       string `json:"status"`
+	Decision     string `json:"decision"`
+}
+
 type tpmProvisionOutput struct {
 	StatePath  string   `json:"state_path"`
 	KeyID      string   `json:"key_id"`
@@ -2639,6 +2917,7 @@ func printUsage(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "  BAO_TOKEN=... bao-unsealctl rotate openbao-root -state broker.db -operation-id rot_...")
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl rotate verify-restart -state broker.db -operation-id rot_...")
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl revoke subject -state broker.db -subject-id node-a")
+	_, _ = fmt.Fprintln(out, "  bao-unsealctl k8s publish-node -addr 127.0.0.1:8443 -node-name kind-worker")
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl tpm provision -state-path /var/lib/openbao-attested-unseal \\")
 	_, _ = fmt.Fprintln(out, "    -package recovery.json -shares-file shares.json")
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl tpm status -state-path /var/lib/openbao-attested-unseal")

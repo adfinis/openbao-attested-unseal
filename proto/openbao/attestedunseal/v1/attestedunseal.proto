@@ -21,6 +21,8 @@ service RecoveryService {
 
 service AdminService {
   rpc Status(AdminStatusRequest) returns (AdminStatusResponse);
+  rpc PublishNodeEvidence(NodeEvidencePublishRequest) returns (NodeEvidencePublishResponse);
+  rpc ListNodeEvidence(NodeEvidenceListRequest) returns (NodeEvidenceListResponse);
 }
 
 enum Operation {
@@ -138,6 +140,7 @@ message NodeEvidenceRecord {
   repeated Claim claims = 9;
   NodeEvidenceStatus status = 10;
   repeated BrokerError errors = 11;
+  string provider_id = 12;
 }
 
 message NodeEvidenceListRequest {
@@ -148,6 +151,16 @@ message NodeEvidenceListRequest {
 
 message NodeEvidenceListResponse {
   repeated NodeEvidenceRecord evidence = 1;
+  PolicyDecision decision = 2;
+}
+
+message NodeEvidencePublishRequest {
+  NodeEvidenceRecord evidence = 1;
+  AuditContext audit = 2;
+}
+
+message NodeEvidencePublishResponse {
+  NodeEvidenceRecord evidence = 1;
   PolicyDecision decision = 2;
 }
 

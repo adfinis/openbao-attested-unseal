@@ -18,6 +18,9 @@ var (
 	ErrNodeEvidenceInvalid = errors.New("node evidence invalid")
 )
 
+// NodeEvidenceProviderFakeLocal identifies synthetic node evidence for tests and local labs.
+const NodeEvidenceProviderFakeLocal = "fake-local"
+
 // NodeEvidence records broker-trusted evidence for one Kubernetes node.
 type NodeEvidence struct {
 	ClusterID    string
@@ -102,6 +105,57 @@ func (c *MemoryNodeEvidenceCache) FreshNodeEvidence(
 		return evidence, ErrNodeEvidenceStale
 	}
 	return evidence, nil
+}
+
+// NodeEvidence returns cached node evidence without enforcing freshness.
+func (c *MemoryNodeEvidenceCache) NodeEvidence(
+	_ context.Context,
+	clusterID string,
+	nodeName string,
+) (NodeEvidence, error) {
+	if c == nil {
+		return NodeEvidence{}, ErrNodeEvidenceNotFound
+	}
+	key := nodeEvidenceKey{
+		clusterID: strings.TrimSpace(clusterID),
+		nodeName:  strings.TrimSpace(nodeName),
+	}
+	c.mu.RLock()
+	evidence, ok := c.records[key]
+	c.mu.RUnlock()
+	if !ok {
+		return NodeEvidence{}, ErrNodeEvidenceNotFound
+	}
+	return evidence, nil
+}
+
+// ListNodeEvidence returns cached evidence for one cluster, optionally filtered by node name.
+func (c *MemoryNodeEvidenceCache) ListNodeEvidence(
+	_ context.Context,
+	clusterID string,
+	nodeName string,
+) ([]NodeEvidence, error) {
+	if c == nil {
+		return nil, ErrNodeEvidenceNotFound
+	}
+	clusterID = strings.TrimSpace(clusterID)
+	nodeName = strings.TrimSpace(nodeName)
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]NodeEvidence, 0, len(c.records))
+	for key, evidence := range c.records {
+		if key.clusterID != clusterID {
+			continue
+		}
+		if nodeName != "" && key.nodeName != nodeName {
+			continue
+		}
+		out = append(out, evidence)
+	}
+	if len(out) == 0 {
+		return nil, ErrNodeEvidenceNotFound
+	}
+	return out, nil
 }
 
 func normalizeNodeEvidence(evidence NodeEvidence) (NodeEvidence, error) {

@@ -607,7 +607,7 @@ func TestPlaintextRequiresExplicitTestConfig(t *testing.T) {
 	config.AllowPlaintextForTests = false
 	config.TLSCertFile = ""
 	config.TLSKeyFile = ""
-	if _, err := NewGRPCServer(config, nil); err == nil {
+	if _, err := NewGRPCServer(config, nil, nil); err == nil {
 		t.Fatal("NewGRPCServer returned nil error without TLS")
 	}
 }
