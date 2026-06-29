@@ -3,8 +3,6 @@
 package openbao
 
 import (
-	"bytes"
-	"encoding/base64"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -185,7 +183,7 @@ func writeBrokerConfig(t *testing.T, path string) {
   "development_wrapping_key_b64": %q,
   "challenge_ttl_seconds": 60
 }
-`, base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32)))
+`, brokerDevelopmentWrappingKeyB64())
 	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
 		t.Fatalf("WriteFile broker config returned error: %v", err)
 	}
