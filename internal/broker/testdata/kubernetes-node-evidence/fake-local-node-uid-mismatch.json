@@ -1,0 +1,9 @@
+{
+  "cluster_id": "prod-eu1",
+  "node_name": "node-a",
+  "node_uid": "other-node-uid",
+  "provider": "fake-local",
+  "evidence_hash": "sha256:a9f62113ce508976f1f3685c406a1565a6a1f99fb8dd91f2d5a3b9d4d3f3e6c1",
+  "collected_at": "2026-06-29T20:00:00Z",
+  "expires_at": "2026-06-29T20:05:00Z"
+}
