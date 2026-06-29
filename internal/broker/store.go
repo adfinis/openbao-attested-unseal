@@ -131,6 +131,26 @@ type RotationOperation struct {
 	ActivatedAt time.Time
 }
 
+// RotationVerificationName identifies one proof point in the rotation workflow.
+type RotationVerificationName string
+
+const (
+	// RotationVerificationOpenBAORoot records that OpenBao accepted /sys/rotate/root.
+	RotationVerificationOpenBAORoot RotationVerificationName = "openbao-root"
+	// RotationVerificationRestart records that OpenBao restarted and auto-unsealed.
+	RotationVerificationRestart RotationVerificationName = "restart"
+	// RotationVerificationKeyVersion is reserved for future BlobInfo key-version proof.
+	RotationVerificationKeyVersion RotationVerificationName = "key-version"
+)
+
+// RotationVerification is one durable verification signal for a rotation.
+type RotationVerification struct {
+	OperationID string
+	Name        RotationVerificationName
+	VerifiedAt  time.Time
+	Detail      string
+}
+
 // Store persists broker state.
 type Store interface {
 	Close() error
@@ -148,6 +168,14 @@ type Store interface {
 	StartRotation(ctx context.Context, request RotationStartRequest) (RotationOperation, error)
 	ActivateRotation(ctx context.Context, operationID string, now time.Time) (RotationOperation, error)
 	RotationOperation(ctx context.Context, operationID string) (RotationOperation, error)
+	RecordRotationVerification(
+		ctx context.Context,
+		operationID string,
+		name RotationVerificationName,
+		detail string,
+		now time.Time,
+	) (RotationVerification, error)
+	RotationVerifications(ctx context.Context, operationID string) ([]RotationVerification, error)
 	CreateChallenge(ctx context.Context, challenge Challenge) error
 	ConsumeChallenge(
 		ctx context.Context,

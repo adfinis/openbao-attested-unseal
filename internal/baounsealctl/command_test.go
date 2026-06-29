@@ -390,24 +390,7 @@ func TestRotateOpenBAORootJSON(t *testing.T) {
 		"-format", "json",
 	)
 
-	seen := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen++
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %s, want POST", r.Method)
-		}
-		if r.URL.Path != "/v1/sys/rotate/root" {
-			t.Errorf("path = %s, want /v1/sys/rotate/root", r.URL.Path)
-		}
-		if r.Header.Get("X-Vault-Request") != "true" {
-			t.Errorf("X-Vault-Request = %q, want true", r.Header.Get("X-Vault-Request"))
-		}
-		if r.Header.Get("X-Vault-Token") != "test-token" {
-			t.Errorf("X-Vault-Token = %q, want test-token", r.Header.Get("X-Vault-Token"))
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer server.Close()
+	server := startOpenBAORotationTestServer(t)
 
 	t.Setenv("BAO_TOKEN", "test-token")
 	var out rotateOpenBAORootOutput
@@ -419,25 +402,78 @@ func TestRotateOpenBAORootJSON(t *testing.T) {
 		"-addr", server.URL,
 		"-format", "json",
 	)
-	if seen != 1 {
-		t.Fatalf("OpenBao server calls = %d, want 1", seen)
+	if server.RotateRootCalls != 1 {
+		t.Fatalf("OpenBao root rotation calls = %d, want 1", server.RotateRootCalls)
 	}
-	if out.AuditID == "" || out.OperationID != activated.OperationID || out.HTTPStatus != http.StatusNoContent {
-		t.Fatalf("openbao-root output = %#v", out)
+	assertOpenBAORootOutput(t, out, activated.OperationID, server.URL)
+
+	var restartOut rotateVerifyRestartOutput
+	runJSON(t, &restartOut,
+		"rotate", "verify-restart",
+		"-state", statePath,
+		"-audit-file", auditPath,
+		"-operation-id", activated.OperationID,
+		"-addr", server.URL,
+		"-format", "json",
+	)
+	if server.SealStatusCalls != 1 {
+		t.Fatalf("OpenBao seal-status calls = %d, want 1", server.SealStatusCalls)
 	}
-	if out.Endpoint != server.URL+"/v1/sys/rotate/root" {
-		t.Fatalf("endpoint = %q, want %s", out.Endpoint, server.URL+"/v1/sys/rotate/root")
+	assertRestartVerificationOutput(t, restartOut)
+
+	var rotationStatus rotateOutput
+	runJSON(t, &rotationStatus,
+		"rotate", "status",
+		"-state", statePath,
+		"-operation-id", activated.OperationID,
+		"-format", "json",
+	)
+	assertVerificationOutput(t, rotationStatus.Verifications, broker.RotationVerificationOpenBAORoot, true)
+	assertVerificationOutput(t, rotationStatus.Verifications, broker.RotationVerificationRestart, true)
+	assertVerificationOutput(t, rotationStatus.Verifications, broker.RotationVerificationKeyVersion, false)
+	assertRotationAuditFile(t, auditPath)
+}
+
+func TestRotateVerifyRestartRequiresOpenBAORootVerification(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "broker.db")
+	recoveryPath := filepath.Join(dir, "recovery.json")
+
+	var initOut initOutput
+	runJSON(t, &initOut, "init", "-state", statePath, "-recovery-package", recoveryPath, "-format", "json")
+	var started rotateOutput
+	runJSON(t, &started, "rotate", "start", "-state", statePath, "-format", "json")
+	var activated rotateOutput
+	runJSON(t, &activated,
+		"rotate", "activate",
+		"-state", statePath,
+		"-operation-id", started.OperationID,
+		"-format", "json",
+	)
+
+	seen := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		seen++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"type":"attested","initialized":true,"sealed":false}`))
+	}))
+	defer server.Close()
+
+	err := runCommand(
+		"rotate", "verify-restart",
+		"-state", statePath,
+		"-operation-id", activated.OperationID,
+		"-addr", server.URL,
+	)
+	if err == nil {
+		t.Fatal("verify-restart returned nil error, want missing openbao-root verification error")
 	}
-	// #nosec G304 -- test reads the audit file generated under t.TempDir.
-	auditFile, err := os.ReadFile(auditPath)
-	if err != nil {
-		t.Fatalf("ReadFile audit returned error: %v", err)
+	var exitErr cli.ExitErrorWithCode
+	if !errors.As(err, &exitErr) || exitErr.Code != cli.ExitCheckFailed {
+		t.Fatalf("verify-restart exit error = %v, want ExitCheckFailed", err)
 	}
-	if strings.Contains(string(auditFile), "test-token") {
-		t.Fatal("audit file contains BAO_TOKEN")
-	}
-	if !strings.Contains(string(auditFile), "openbao root key rotation completed") {
-		t.Fatalf("audit file does not contain success reason: %s", auditFile)
+	if seen != 0 {
+		t.Fatalf("OpenBao server calls = %d, want 0", seen)
 	}
 }
 
@@ -806,6 +842,110 @@ func runCommand(args ...string) error {
 	return Execute(version.Info{Version: "test"}, args, &stdout, &stderr)
 }
 
+type openBAORotationTestServer struct {
+	*httptest.Server
+	RotateRootCalls int
+	SealStatusCalls int
+}
+
+func startOpenBAORotationTestServer(t *testing.T) *openBAORotationTestServer {
+	t.Helper()
+	fixture := &openBAORotationTestServer{}
+	fixture.Server = httptest.NewServer(http.HandlerFunc(fixture.handle))
+	t.Cleanup(fixture.Close)
+	return fixture
+}
+
+func (s *openBAORotationTestServer) handle(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/v1/sys/rotate/root":
+		s.handleRotateRoot(w, r)
+	case "/v1/sys/seal-status":
+		s.handleSealStatus(w, r)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (s *openBAORotationTestServer) handleRotateRoot(w http.ResponseWriter, r *http.Request) {
+	s.RotateRootCalls++
+	if r.Method != http.MethodPost {
+		http.Error(w, "method must be POST", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.Header.Get("X-Vault-Request") != "true" {
+		http.Error(w, "missing X-Vault-Request", http.StatusBadRequest)
+		return
+	}
+	if r.Header.Get("X-Vault-Token") != "test-token" {
+		http.Error(w, "missing token", http.StatusUnauthorized)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *openBAORotationTestServer) handleSealStatus(w http.ResponseWriter, r *http.Request) {
+	s.SealStatusCalls++
+	if r.Method != http.MethodGet {
+		http.Error(w, "method must be GET", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.Header.Get("X-Vault-Token") != "" {
+		http.Error(w, "seal-status must be unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"type":"attested","initialized":true,"sealed":false}`))
+}
+
+func assertOpenBAORootOutput(
+	t *testing.T,
+	out rotateOpenBAORootOutput,
+	operationID string,
+	address string,
+) {
+	t.Helper()
+	if out.AuditID == "" || out.OperationID != operationID || out.HTTPStatus != http.StatusNoContent {
+		t.Fatalf("openbao-root output = %#v", out)
+	}
+	if !out.Verification.Verified || out.Verification.Name != string(broker.RotationVerificationOpenBAORoot) {
+		t.Fatalf("openbao-root verification = %#v, want verified openbao-root", out.Verification)
+	}
+	if out.Endpoint != address+"/v1/sys/rotate/root" {
+		t.Fatalf("endpoint = %q, want %s", out.Endpoint, address+"/v1/sys/rotate/root")
+	}
+}
+
+func assertRestartVerificationOutput(t *testing.T, out rotateVerifyRestartOutput) {
+	t.Helper()
+	if !out.Verification.Verified ||
+		out.Verification.Name != string(broker.RotationVerificationRestart) ||
+		!out.OpenBaoInitialized ||
+		out.OpenBaoSealed {
+		t.Fatalf("restart verification output = %#v, want verified unsealed restart", out)
+	}
+}
+
+func assertRotationAuditFile(t *testing.T, auditPath string) {
+	t.Helper()
+	// #nosec G304 -- test reads the audit file generated under t.TempDir.
+	auditFile, err := os.ReadFile(auditPath)
+	if err != nil {
+		t.Fatalf("ReadFile audit returned error: %v", err)
+	}
+	if strings.Contains(string(auditFile), "test-token") {
+		t.Fatal("audit file contains BAO_TOKEN")
+	}
+	for _, reason := range []string{
+		"openbao root key rotation completed",
+		"openbao restart verification completed",
+	} {
+		if !strings.Contains(string(auditFile), reason) {
+			t.Fatalf("audit file does not contain %q: %s", reason, auditFile)
+		}
+	}
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -813,6 +953,25 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func assertVerificationOutput(
+	t *testing.T,
+	verifications []rotationVerificationOutput,
+	name broker.RotationVerificationName,
+	verified bool,
+) {
+	t.Helper()
+	for _, verification := range verifications {
+		if verification.Name != string(name) {
+			continue
+		}
+		if verification.Verified != verified {
+			t.Fatalf("verification %s verified = %t, want %t", name, verification.Verified, verified)
+		}
+		return
+	}
+	t.Fatalf("verification %s not found in %#v", name, verifications)
 }
 
 func assertCLIKeyStatus(

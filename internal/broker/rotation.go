@@ -1,7 +1,9 @@
 package broker
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 )
@@ -21,6 +23,18 @@ func validateRotationStart(request RotationStartRequest) error {
 	}
 	if len(request.Material) != keyring.KeySize {
 		return fmt.Errorf("%w: key material must be %d bytes", keyring.ErrInvalidMetadata, keyring.KeySize)
+	}
+	return nil
+}
+
+func validateRotationVerification(name RotationVerificationName, detail string) error {
+	switch name {
+	case RotationVerificationOpenBAORoot, RotationVerificationRestart, RotationVerificationKeyVersion:
+	default:
+		return fmt.Errorf("%w: unsupported rotation verification %q", ErrRotationInvalidTransition, name)
+	}
+	if strings.TrimSpace(detail) == "" {
+		return errors.New("rotation verification detail is required")
 	}
 	return nil
 }

@@ -157,6 +157,21 @@ Use a short-lived operator token from the normal OpenBao auth method. If no such
 token exists, generate a temporary root token through the OpenBao
 `operator generate-root` quorum flow, run the rewrite, and revoke it.
 
+After OpenBao has restarted, record the restart verification:
+
+```sh
+bao-unsealctl rotate verify-restart \
+  -state broker.db \
+  -operation-id rot_...
+```
+
+`rotate verify-restart` calls unauthenticated `GET /v1/sys/seal-status` and
+records success only when OpenBao reports `initialized=true` and `sealed=false`.
+`rotate status` reports durable verification state for `openbao-root`,
+`restart`, and the future `key-version` proof. The current implementation does
+not yet prove the stored key blob was encrypted under the new key version, so
+old key retirement remains deferred until that proof exists.
+
 ## Limits
 
 Local TPM mode does not implement remote TPM enrollment. Full remote enrollment

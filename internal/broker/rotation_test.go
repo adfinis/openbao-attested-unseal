@@ -55,6 +55,63 @@ func TestRotationActivateRejectsUnknownOperation(t *testing.T) {
 	}
 }
 
+func TestRotationVerificationsRecordAndRefresh(t *testing.T) {
+	config := testConfig(t)
+	store := newTestStore(t, config)
+	startTestRotation(t, store, config, "rot_test", 2)
+
+	first, err := store.RecordRotationVerification(
+		context.Background(),
+		"rot_test",
+		RotationVerificationOpenBAORoot,
+		"HTTP 204",
+		time.Unix(100, 0).UTC(),
+	)
+	if err != nil {
+		t.Fatalf("RecordRotationVerification returned error: %v", err)
+	}
+	if first.Name != RotationVerificationOpenBAORoot || first.Detail != "HTTP 204" {
+		t.Fatalf("verification = %#v, want openbao-root HTTP 204", first)
+	}
+	refreshed, err := store.RecordRotationVerification(
+		context.Background(),
+		"rot_test",
+		RotationVerificationOpenBAORoot,
+		"HTTP 200",
+		time.Unix(200, 0).UTC(),
+	)
+	if err != nil {
+		t.Fatalf("RecordRotationVerification refresh returned error: %v", err)
+	}
+	if !refreshed.VerifiedAt.Equal(time.Unix(200, 0).UTC()) {
+		t.Fatalf("refreshed time = %s, want unix 200", refreshed.VerifiedAt)
+	}
+	verifications, err := store.RotationVerifications(context.Background(), "rot_test")
+	if err != nil {
+		t.Fatalf("RotationVerifications returned error: %v", err)
+	}
+	if len(verifications) != 1 {
+		t.Fatalf("verifications = %d, want 1", len(verifications))
+	}
+	if verifications[0].Detail != "HTTP 200" {
+		t.Fatalf("verification detail = %q, want HTTP 200", verifications[0].Detail)
+	}
+}
+
+func TestRotationVerificationRejectsUnknownOperation(t *testing.T) {
+	store := newTestStore(t, testConfig(t))
+	_, err := store.RecordRotationVerification(
+		context.Background(),
+		"rot_missing",
+		RotationVerificationOpenBAORoot,
+		"HTTP 204",
+		time.Now(),
+	)
+	if !errors.Is(err, ErrRotationNotFound) {
+		t.Fatalf("RecordRotationVerification error = %v, want ErrRotationNotFound", err)
+	}
+}
+
 func assertKeyStatus(t *testing.T, store *SQLiteStore, config Config, version uint32, status keyring.Status) {
 	t.Helper()
 	got, err := store.KeyVersion(context.Background(), keyring.KeyRef{

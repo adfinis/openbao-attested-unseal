@@ -144,6 +144,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS rotation_operations_one_started
 ON rotation_operations(cluster_id, key_id)
 WHERE status = 'started';
 
+CREATE TABLE IF NOT EXISTS rotation_verifications (
+  operation_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  verified_at TEXT NOT NULL,
+  detail TEXT NOT NULL,
+  PRIMARY KEY (operation_id, name),
+  FOREIGN KEY (operation_id) REFERENCES rotation_operations(operation_id)
+);
+
 CREATE TABLE IF NOT EXISTS subjects (
   cluster_id TEXT NOT NULL,
   subject_id TEXT NOT NULL,
@@ -245,6 +254,9 @@ VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 }
 
@@ -767,6 +779,99 @@ func (s *SQLiteStore) ActivateRotation(
 // RotationOperation loads one durable rotation operation.
 func (s *SQLiteStore) RotationOperation(ctx context.Context, operationID string) (RotationOperation, error) {
 	return queryRotationOperation(ctx, s.db, operationID)
+}
+
+// RecordRotationVerification records or refreshes one rotation verification signal.
+func (s *SQLiteStore) RecordRotationVerification(
+	ctx context.Context,
+	operationID string,
+	name RotationVerificationName,
+	detail string,
+	now time.Time,
+) (RotationVerification, error) {
+	if err := validateRotationVerification(name, detail); err != nil {
+		return RotationVerification{}, err
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	now = now.UTC()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RotationVerification{}, fmt.Errorf("begin rotation verification transaction: %w", err)
+	}
+	defer rollbackUnlessCommitted(tx)
+	if _, err := queryRotationOperationTx(ctx, tx, operationID); err != nil {
+		return RotationVerification{}, err
+	}
+	verification := RotationVerification{
+		OperationID: operationID,
+		Name:        name,
+		VerifiedAt:  now,
+		Detail:      detail,
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO rotation_verifications(operation_id, name, verified_at, detail)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(operation_id, name) DO UPDATE SET
+		   verified_at = excluded.verified_at,
+		   detail = excluded.detail`,
+		verification.OperationID,
+		string(verification.Name),
+		verification.VerifiedAt.Format(time.RFC3339Nano),
+		verification.Detail,
+	); err != nil {
+		return RotationVerification{}, fmt.Errorf("record rotation verification: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return RotationVerification{}, fmt.Errorf("commit rotation verification transaction: %w", err)
+	}
+	return verification, nil
+}
+
+// RotationVerifications loads all verification signals for one rotation operation.
+func (s *SQLiteStore) RotationVerifications(ctx context.Context, operationID string) ([]RotationVerification, error) {
+	if _, err := s.RotationOperation(ctx, operationID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT operation_id, name, verified_at, detail
+		 FROM rotation_verifications
+		 WHERE operation_id = ?
+		 ORDER BY name`,
+		operationID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query rotation verifications: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	verifications := make([]RotationVerification, 0)
+	for rows.Next() {
+		var verification RotationVerification
+		var name string
+		var verifiedAtRaw string
+		if err := rows.Scan(
+			&verification.OperationID,
+			&name,
+			&verifiedAtRaw,
+			&verification.Detail,
+		); err != nil {
+			return nil, fmt.Errorf("scan rotation verification: %w", err)
+		}
+		verification.Name = RotationVerificationName(name)
+		verifiedAt, parseErr := time.Parse(time.RFC3339Nano, verifiedAtRaw)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse rotation verification time: %w", parseErr)
+		}
+		verification.VerifiedAt = verifiedAt
+		verifications = append(verifications, verification)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate rotation verifications: %w", err)
+	}
+	return verifications, nil
 }
 
 // CreateChallenge stores one broker challenge.

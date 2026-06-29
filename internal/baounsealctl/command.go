@@ -623,6 +623,8 @@ func rotateCommand(args []string, stdout io.Writer, stderr io.Writer) error {
 		return rotateActivateCommand(args[1:], stdout, stderr)
 	case "openbao-root":
 		return rotateOpenBAORootCommand(args[1:], stdout, stderr)
+	case "verify-restart":
+		return rotateVerifyRestartCommand(args[1:], stdout, stderr)
 	case commandStatus:
 		return rotateStatusCommand(args[1:], stdout, stderr)
 	default:
@@ -780,11 +782,17 @@ func rotateStatusCommand(args []string, stdout io.Writer, stderr io.Writer) erro
 	if err != nil {
 		return cli.WithExitCode(cli.ExitCheckFailed, err)
 	}
+	verifications, err := store.RotationVerifications(context.Background(), operation.OperationID)
+	if err != nil {
+		return cli.WithExitCode(cli.ExitCheckFailed, err)
+	}
 	out := rotateOutputFromOperation(operation, "")
+	out.Verifications = rotationVerificationOutputs(verifications)
 	return writeOutput(stdout, *format, out, func() {
 		_, _ = fmt.Fprintf(stdout, "Rotation operation: %s\n", out.OperationID)
 		_, _ = fmt.Fprintf(stdout, "Key: %s/%s v%d -> v%d\n", out.ClusterID, out.KeyID, out.FromVersion, out.ToVersion)
 		_, _ = fmt.Fprintf(stdout, "Status: %s\n", out.Status)
+		printRotationVerifications(stdout, out.Verifications)
 	})
 }
 
@@ -907,16 +915,27 @@ func rotateOpenBAORoot(options rotateOpenBAORootOptions) (rotateOpenBAORootOutpu
 	if callErr != nil {
 		return rotateOpenBAORootOutput{}, cli.WithExitCode(cli.ExitRuntime, callErr)
 	}
+	verification, err := store.RecordRotationVerification(
+		context.Background(),
+		operation.OperationID,
+		broker.RotationVerificationOpenBAORoot,
+		fmt.Sprintf("OpenBao /sys/rotate/root returned HTTP %d", statusCode),
+		time.Now().UTC(),
+	)
+	if err != nil {
+		return rotateOpenBAORootOutput{}, cli.WithExitCode(cli.ExitRuntime, err)
+	}
 	return rotateOpenBAORootOutput{
-		AuditID:     auditID,
-		OperationID: operation.OperationID,
-		ClusterID:   operation.ClusterID,
-		KeyID:       operation.KeyID,
-		FromVersion: operation.FromVersion,
-		ToVersion:   operation.ToVersion,
-		Status:      string(operation.Status),
-		Endpoint:    endpoint,
-		HTTPStatus:  statusCode,
+		AuditID:      auditID,
+		OperationID:  operation.OperationID,
+		ClusterID:    operation.ClusterID,
+		KeyID:        operation.KeyID,
+		FromVersion:  operation.FromVersion,
+		ToVersion:    operation.ToVersion,
+		Status:       string(operation.Status),
+		Endpoint:     endpoint,
+		HTTPStatus:   statusCode,
+		Verification: rotationVerificationOutputFromRecord(verification),
 	}, nil
 }
 
@@ -926,7 +945,7 @@ func callOpenBaoRotateRoot(
 	endpoint string,
 	token string,
 ) (int, error) {
-	client, err := newOpenBaoClient(options)
+	client, err := newOpenBaoClient(options.caCertPath, options.tlsServerName, options.timeout)
 	if err != nil {
 		return 0, err
 	}
@@ -951,20 +970,224 @@ func callOpenBaoRotateRoot(
 	return resp.StatusCode, nil
 }
 
-func newOpenBaoClient(options rotateOpenBAORootOptions) (*http.Client, error) {
+type rotateVerifyRestartOptions struct {
+	statePath     string
+	auditPath     string
+	operationID   string
+	address       string
+	caCertPath    string
+	tlsServerName string
+	timeout       time.Duration
+	format        string
+}
+
+func rotateVerifyRestartCommand(args []string, stdout io.Writer, stderr io.Writer) error {
+	flags := flag.NewFlagSet("rotate verify-restart", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	statePath := flags.String("state", "", "Path to broker SQLite state.")
+	auditPath := flags.String("audit-file", "", "Optional JSONL audit file path.")
+	operationID := flags.String("operation-id", "", "Rotation operation identifier.")
+	address := flags.String("addr", envOrDefault("BAO_ADDR", "https://127.0.0.1:8200"), "OpenBao API address.")
+	caCertPath := flags.String("ca-cert", "", "Optional PEM CA certificate for OpenBao TLS.")
+	tlsServerName := flags.String("tls-server-name", "", "Optional TLS server name override.")
+	timeout := flags.Duration("timeout", 30*time.Second, "OpenBao request timeout.")
+	format := flags.String("format", formatText, "Output format: text or json.")
+	if err := flags.Parse(args); err != nil {
+		return cli.WithExitCode(cli.ExitUsage, err)
+	}
+	if err := validateFormat(*format); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*statePath) == "" || strings.TrimSpace(*operationID) == "" {
+		return cli.WithExitCode(cli.ExitUsage, errors.New("-state and -operation-id are required"))
+	}
+	if *timeout <= 0 {
+		return cli.WithExitCode(cli.ExitUsage, errors.New("-timeout must be greater than zero"))
+	}
+	options := rotateVerifyRestartOptions{
+		statePath:     *statePath,
+		auditPath:     *auditPath,
+		operationID:   strings.TrimSpace(*operationID),
+		address:       strings.TrimSpace(*address),
+		caCertPath:    strings.TrimSpace(*caCertPath),
+		tlsServerName: strings.TrimSpace(*tlsServerName),
+		timeout:       *timeout,
+		format:        *format,
+	}
+	out, err := rotateVerifyRestart(options)
+	if err != nil {
+		return err
+	}
+	return writeOutput(stdout, options.format, out, func() {
+		_, _ = fmt.Fprintf(stdout, "Rotation operation: %s\n", out.OperationID)
+		_, _ = fmt.Fprintf(stdout, "Verification: %s\n", out.Verification.Name)
+		_, _ = fmt.Fprintf(stdout, "OpenBao initialized: %t\n", out.OpenBaoInitialized)
+		_, _ = fmt.Fprintf(stdout, "OpenBao sealed: %t\n", out.OpenBaoSealed)
+		_, _ = fmt.Fprintf(stdout, "Audit ID: %s\n", out.AuditID)
+	})
+}
+
+func rotateVerifyRestart(options rotateVerifyRestartOptions) (rotateVerifyRestartOutput, error) {
+	store, err := broker.OpenSQLiteStore(context.Background(), options.statePath)
+	if err != nil {
+		return rotateVerifyRestartOutput{}, cli.WithExitCode(cli.ExitConfig, err)
+	}
+	defer func() { _ = store.Close() }()
+	operation, err := store.RotationOperation(context.Background(), options.operationID)
+	if err != nil {
+		return rotateVerifyRestartOutput{}, cli.WithExitCode(cli.ExitCheckFailed, err)
+	}
+	if operation.Status != broker.RotationStatusActivated {
+		return rotateVerifyRestartOutput{}, cli.WithExitCode(
+			cli.ExitCheckFailed,
+			fmt.Errorf(
+				"%w: rotation must be activated before restart verification; status is %q",
+				broker.ErrRotationInvalidTransition,
+				operation.Status,
+			),
+		)
+	}
+	verifications, err := store.RotationVerifications(context.Background(), operation.OperationID)
+	if err != nil {
+		return rotateVerifyRestartOutput{}, cli.WithExitCode(cli.ExitCheckFailed, err)
+	}
+	if !hasRotationVerification(verifications, broker.RotationVerificationOpenBAORoot) {
+		return rotateVerifyRestartOutput{}, cli.WithExitCode(
+			cli.ExitCheckFailed,
+			fmt.Errorf("%w: openbao-root verification is required first", broker.ErrRotationInvalidTransition),
+		)
+	}
+	endpoint, err := openBaoEndpoint(options.address, "/v1/sys/seal-status")
+	if err != nil {
+		return rotateVerifyRestartOutput{}, cli.WithExitCode(cli.ExitConfig, err)
+	}
+	status, err := callOpenBaoSealStatus(context.Background(), options, endpoint)
+	if err != nil {
+		_, _ = auditRotationWithDecision(
+			store,
+			options.auditPath,
+			operation,
+			"rotation",
+			"POLICY_DECISION_STATE_DENY",
+			"openbao restart verification failed",
+		)
+		return rotateVerifyRestartOutput{}, cli.WithExitCode(cli.ExitCheckFailed, err)
+	}
+	if !status.Initialized || status.Sealed {
+		_, _ = auditRotationWithDecision(
+			store,
+			options.auditPath,
+			operation,
+			"rotation",
+			"POLICY_DECISION_STATE_DENY",
+			"openbao restart verification failed",
+		)
+		return rotateVerifyRestartOutput{}, cli.WithExitCode(
+			cli.ExitCheckFailed,
+			fmt.Errorf(
+				"OpenBao seal status initialized=%t sealed=%t, want initialized=true sealed=false",
+				status.Initialized,
+				status.Sealed,
+			),
+		)
+	}
+	detail := fmt.Sprintf(
+		"OpenBao seal-status initialized=%t sealed=%t type=%s",
+		status.Initialized,
+		status.Sealed,
+		status.Type,
+	)
+	verification, err := store.RecordRotationVerification(
+		context.Background(),
+		operation.OperationID,
+		broker.RotationVerificationRestart,
+		detail,
+		time.Now().UTC(),
+	)
+	if err != nil {
+		return rotateVerifyRestartOutput{}, cli.WithExitCode(cli.ExitRuntime, err)
+	}
+	auditID, err := auditRotationWithDecision(
+		store,
+		options.auditPath,
+		operation,
+		"rotation",
+		"POLICY_DECISION_STATE_ALLOW",
+		"openbao restart verification completed",
+	)
+	if err != nil {
+		return rotateVerifyRestartOutput{}, cli.WithExitCode(cli.ExitRuntime, err)
+	}
+	return rotateVerifyRestartOutput{
+		AuditID:            auditID,
+		OperationID:        operation.OperationID,
+		ClusterID:          operation.ClusterID,
+		KeyID:              operation.KeyID,
+		FromVersion:        operation.FromVersion,
+		ToVersion:          operation.ToVersion,
+		Status:             string(operation.Status),
+		Endpoint:           endpoint,
+		OpenBaoInitialized: status.Initialized,
+		OpenBaoSealed:      status.Sealed,
+		OpenBaoSealType:    status.Type,
+		Verification:       rotationVerificationOutputFromRecord(verification),
+	}, nil
+}
+
+type openBaoSealStatus struct {
+	Type        string `json:"type"`
+	Initialized bool   `json:"initialized"`
+	Sealed      bool   `json:"sealed"`
+}
+
+func callOpenBaoSealStatus(
+	ctx context.Context,
+	options rotateVerifyRestartOptions,
+	endpoint string,
+) (openBaoSealStatus, error) {
+	client, err := newOpenBaoClient(options.caCertPath, options.tlsServerName, options.timeout)
+	if err != nil {
+		return openBaoSealStatus{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return openBaoSealStatus{}, fmt.Errorf("create OpenBao seal-status request: %w", err)
+	}
+	req.Header.Set("X-Vault-Request", "true")
+	req.Header.Set("User-Agent", "bao-unsealctl")
+	resp, err := client.Do(req)
+	if err != nil {
+		return openBaoSealStatus{}, fmt.Errorf("call OpenBao seal-status endpoint: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		_ = resp.Body.Close()
+	}()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return openBaoSealStatus{}, fmt.Errorf("OpenBao seal-status failed with HTTP status %d", resp.StatusCode)
+	}
+	var status openBaoSealStatus
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, 4096))
+	if err := decoder.Decode(&status); err != nil {
+		return openBaoSealStatus{}, fmt.Errorf("decode OpenBao seal-status: %w", err)
+	}
+	return status, nil
+}
+
+func newOpenBaoClient(caCertPath string, tlsServerName string, timeout time.Duration) (*http.Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if options.caCertPath != "" || options.tlsServerName != "" {
+	if caCertPath != "" || tlsServerName != "" {
 		tlsConfig := &tls.Config{
 			MinVersion: tls.VersionTLS12,
-			ServerName: options.tlsServerName,
+			ServerName: tlsServerName,
 		}
-		if options.caCertPath != "" {
+		if caCertPath != "" {
 			pool, err := x509.SystemCertPool()
 			if err != nil {
 				pool = x509.NewCertPool()
 			}
 			// #nosec G304 -- CA certificate path is operator supplied.
-			caPEM, err := os.ReadFile(options.caCertPath)
+			caPEM, err := os.ReadFile(caCertPath)
 			if err != nil {
 				return nil, fmt.Errorf("read CA certificate: %w", err)
 			}
@@ -976,7 +1199,7 @@ func newOpenBaoClient(options rotateOpenBAORootOptions) (*http.Client, error) {
 		transport.TLSClientConfig = tlsConfig
 	}
 	return &http.Client{
-		Timeout:   options.timeout,
+		Timeout:   timeout,
 		Transport: transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -1060,6 +1283,70 @@ func rotateOutputFromOperation(operation broker.RotationOperation, auditID strin
 		FromVersion: operation.FromVersion,
 		ToVersion:   operation.ToVersion,
 		Status:      string(operation.Status),
+	}
+}
+
+func rotationVerificationOutputs(records []broker.RotationVerification) []rotationVerificationOutput {
+	byName := make(map[broker.RotationVerificationName]broker.RotationVerification, len(records))
+	for _, record := range records {
+		byName[record.Name] = record
+	}
+	order := []broker.RotationVerificationName{
+		broker.RotationVerificationOpenBAORoot,
+		broker.RotationVerificationRestart,
+		broker.RotationVerificationKeyVersion,
+	}
+	out := make([]rotationVerificationOutput, 0, len(order))
+	for _, name := range order {
+		record, ok := byName[name]
+		if !ok {
+			out = append(out, rotationVerificationOutput{Name: string(name), Verified: false})
+			continue
+		}
+		out = append(out, rotationVerificationOutputFromRecord(record))
+	}
+	return out
+}
+
+func rotationVerificationOutputFromRecord(record broker.RotationVerification) rotationVerificationOutput {
+	return rotationVerificationOutput{
+		Name:       string(record.Name),
+		Verified:   true,
+		VerifiedAt: record.VerifiedAt.UTC().Format(time.RFC3339Nano),
+		Detail:     record.Detail,
+	}
+}
+
+func hasRotationVerification(
+	records []broker.RotationVerification,
+	name broker.RotationVerificationName,
+) bool {
+	for _, record := range records {
+		if record.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func printRotationVerifications(stdout io.Writer, verifications []rotationVerificationOutput) {
+	if len(verifications) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintln(stdout, "Verifications:")
+	for _, verification := range verifications {
+		if verification.Verified {
+			_, _ = fmt.Fprintf(stdout, "  %s: verified", verification.Name)
+			if verification.VerifiedAt != "" {
+				_, _ = fmt.Fprintf(stdout, " at %s", verification.VerifiedAt)
+			}
+			if verification.Detail != "" {
+				_, _ = fmt.Fprintf(stdout, " (%s)", verification.Detail)
+			}
+			_, _ = fmt.Fprintln(stdout)
+			continue
+		}
+		_, _ = fmt.Fprintf(stdout, "  %s: pending\n", verification.Name)
 	}
 }
 
@@ -1980,25 +2267,49 @@ type recoverFinishOutput struct {
 }
 
 type rotateOutput struct {
-	AuditID     string `json:"audit_id,omitempty"`
-	OperationID string `json:"operation_id"`
-	ClusterID   string `json:"cluster_id"`
-	KeyID       string `json:"key_id"`
-	FromVersion uint32 `json:"from_version"`
-	ToVersion   uint32 `json:"to_version"`
-	Status      string `json:"status"`
+	AuditID       string                       `json:"audit_id,omitempty"`
+	OperationID   string                       `json:"operation_id"`
+	ClusterID     string                       `json:"cluster_id"`
+	KeyID         string                       `json:"key_id"`
+	FromVersion   uint32                       `json:"from_version"`
+	ToVersion     uint32                       `json:"to_version"`
+	Status        string                       `json:"status"`
+	Verifications []rotationVerificationOutput `json:"verifications,omitempty"`
 }
 
 type rotateOpenBAORootOutput struct {
-	AuditID     string `json:"audit_id"`
-	OperationID string `json:"operation_id"`
-	ClusterID   string `json:"cluster_id"`
-	KeyID       string `json:"key_id"`
-	FromVersion uint32 `json:"from_version"`
-	ToVersion   uint32 `json:"to_version"`
-	Status      string `json:"status"`
-	Endpoint    string `json:"endpoint"`
-	HTTPStatus  int    `json:"http_status"`
+	AuditID      string                     `json:"audit_id"`
+	OperationID  string                     `json:"operation_id"`
+	ClusterID    string                     `json:"cluster_id"`
+	KeyID        string                     `json:"key_id"`
+	FromVersion  uint32                     `json:"from_version"`
+	ToVersion    uint32                     `json:"to_version"`
+	Status       string                     `json:"status"`
+	Endpoint     string                     `json:"endpoint"`
+	HTTPStatus   int                        `json:"http_status"`
+	Verification rotationVerificationOutput `json:"verification"`
+}
+
+type rotateVerifyRestartOutput struct {
+	AuditID            string                     `json:"audit_id"`
+	OperationID        string                     `json:"operation_id"`
+	ClusterID          string                     `json:"cluster_id"`
+	KeyID              string                     `json:"key_id"`
+	FromVersion        uint32                     `json:"from_version"`
+	ToVersion          uint32                     `json:"to_version"`
+	Status             string                     `json:"status"`
+	Endpoint           string                     `json:"endpoint"`
+	OpenBaoInitialized bool                       `json:"openbao_initialized"`
+	OpenBaoSealed      bool                       `json:"openbao_sealed"`
+	OpenBaoSealType    string                     `json:"openbao_seal_type"`
+	Verification       rotationVerificationOutput `json:"verification"`
+}
+
+type rotationVerificationOutput struct {
+	Name       string `json:"name"`
+	Verified   bool   `json:"verified"`
+	VerifiedAt string `json:"verified_at,omitempty"`
+	Detail     string `json:"detail,omitempty"`
 }
 
 type revokeSubjectOutput struct {
@@ -2322,6 +2633,7 @@ func printUsage(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl rotate start -state broker.db")
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl rotate activate -state broker.db -operation-id rot_...")
 	_, _ = fmt.Fprintln(out, "  BAO_TOKEN=... bao-unsealctl rotate openbao-root -state broker.db -operation-id rot_...")
+	_, _ = fmt.Fprintln(out, "  bao-unsealctl rotate verify-restart -state broker.db -operation-id rot_...")
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl revoke subject -state broker.db -subject-id node-a")
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl tpm provision -state-path /var/lib/openbao-attested-unseal \\")
 	_, _ = fmt.Fprintln(out, "    -package recovery.json -shares-file shares.json")

@@ -48,8 +48,14 @@ type kmsTraceEvent struct {
 }
 
 type ctlRotateOutput struct {
-	OperationID string `json:"operation_id"`
-	HTTPStatus  int    `json:"http_status"`
+	OperationID  string                `json:"operation_id"`
+	HTTPStatus   int                   `json:"http_status"`
+	Verification ctlVerificationOutput `json:"verification"`
+}
+
+type ctlVerificationOutput struct {
+	Name     string `json:"name"`
+	Verified bool   `json:"verified"`
 }
 
 func TestLocalTPMAutoUnsealWithOpenBaoBeta(t *testing.T) {
@@ -213,6 +219,22 @@ func TestLocalTPMAutoUnsealWithOpenBaoBeta(t *testing.T) {
 		10*time.Second,
 	)
 	assertLastTraceKeyID(t, afterRestartEvents, "decrypt", "prod-eu1/root/v1")
+
+	restartJSON := docker(t, true,
+		"run", "--rm",
+		"--network", "container:"+baoName,
+		"-e", "BAO_ADDR="+baoAddr,
+		"-v", linuxCtl+":/usr/local/bin/bao-unsealctl:ro",
+		"-v", brokerPath+":/broker.db",
+		alpineImage,
+		"/usr/local/bin/bao-unsealctl",
+		"rotate", "verify-restart",
+		"-state", "/broker.db",
+		"-operation-id", operation.OperationID,
+		"-addr", baoAddr,
+		"-format", "json",
+	)
+	assertRestartVerification(t, restartJSON)
 }
 
 func requireDocker(t *testing.T) {
@@ -426,6 +448,23 @@ func assertOpenBAORootRotation(t *testing.T, rotationJSON string) {
 	}
 	if output.HTTPStatus < 200 || output.HTTPStatus >= 300 {
 		t.Fatalf("openbao-root HTTP status = %d, want 2xx", output.HTTPStatus)
+	}
+	assertCTLVerification(t, output.Verification, "openbao-root")
+}
+
+func assertRestartVerification(t *testing.T, verificationJSON string) {
+	t.Helper()
+	var output ctlRotateOutput
+	if err := json.Unmarshal([]byte(verificationJSON), &output); err != nil {
+		t.Fatalf("parse verify-restart JSON returned error: %v", err)
+	}
+	assertCTLVerification(t, output.Verification, "restart")
+}
+
+func assertCTLVerification(t *testing.T, verification ctlVerificationOutput, name string) {
+	t.Helper()
+	if verification.Name != name || !verification.Verified {
+		t.Fatalf("verification = %#v, want verified %s", verification, name)
 	}
 }
 
