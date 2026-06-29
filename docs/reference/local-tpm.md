@@ -128,6 +128,35 @@ The current Docker smoke path has been verified against
 again with the same storage, TPM socket, and local TPM state, and confirm
 `bao status -format=json` reports `initialized=true` and `sealed=false`.
 
+## Stored-Key Rewrite
+
+After activating a new attested unseal wrapping-key version, OpenBao must write
+a fresh stored auto-unseal key. Use OpenBao's root-key rotation endpoint for
+that rewrite:
+
+```sh
+export BAO_ADDR=https://openbao.example:8200
+export BAO_TOKEN=<short-lived-operator-token>
+
+bao-unsealctl rotate openbao-root \
+  -state broker.db \
+  -operation-id rot_...
+```
+
+`bao-unsealctl` reads the OpenBao token only from `BAO_TOKEN`; it does not accept
+token material as a command-line flag. The token does not need to be the initial
+root token. It needs `sudo` plus update capability on `sys/rotate/root`:
+
+```hcl
+path "sys/rotate/root" {
+  capabilities = ["update", "sudo"]
+}
+```
+
+Use a short-lived operator token from the normal OpenBao auth method. If no such
+token exists, generate a temporary root token through the OpenBao
+`operator generate-root` quorum flow, run the rewrite, and revoke it.
+
 ## Limits
 
 Local TPM mode does not implement remote TPM enrollment. Full remote enrollment
