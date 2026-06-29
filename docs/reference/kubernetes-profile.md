@@ -17,11 +17,14 @@ envelope with:
 - format `openbao-attested-unseal.kubernetes-workload.v1`;
 - a projected service account token in the evidence payload.
 
-The OpenBao KMS plugin does not yet collect the projected service account token
-or emit Kubernetes workload evidence. The current plugin broker path still emits
-development-subject evidence from `node_id`. A full OpenBao-on-Kubernetes e2e
-therefore needs a follow-on plugin evidence collection slice before manifests
-can prove the complete path.
+The OpenBao KMS plugin emits this evidence when configured with
+`evidence_mode = "kubernetes-workload"`. It reads the projected service account
+token from `kubernetes_token_file`, or from the default in-cluster service
+account token path when that field is omitted.
+
+`node_id` is still required by the broker challenge path. For the current beta
+profile it should match the normalized Kubernetes subject, such as
+`openbao.openbao`.
 
 ## In-Cluster Broker Config
 
@@ -125,14 +128,18 @@ development-subject evidence:
 
 ```hcl
 seal "attested-unseal" {
-  mode        = "broker"
-  broker_addr = "bao-unseald.openbao.svc:8443"
-  cluster_id  = "prod-eu1"
-  node_id     = "openbao.openbao"
+  mode                 = "broker"
+  broker_addr          = "bao-unseald.openbao.svc:8443"
+  cluster_id           = "prod-eu1"
+  node_id              = "openbao.openbao"
+  evidence_mode        = "kubernetes-workload"
+  kubernetes_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 }
 ```
 
-Once plugin-side Kubernetes evidence collection lands, `node_id` should no
-longer be the source of the Kubernetes workload subject. It may remain as a
-challenge correlation or compatibility field, depending on the final wrapper
-contract.
+`kubernetes_token_file` can be omitted for standard in-cluster mounts. It is
+shown here to make the token source explicit.
+
+In this beta profile, `node_id` is challenge correlation input and should equal
+the normalized Kubernetes subject. The Kubernetes verifier still derives the
+actual policy subject from the TokenReview result, not from `node_id`.

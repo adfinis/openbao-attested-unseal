@@ -31,6 +31,7 @@ policy behavior:
 - `namespace` and `service_account` match the OpenBao workload;
 - the default policy contains `namespace.serviceAccount`, such as
   `openbao.openbao`;
+- the OpenBao seal config sets `evidence_mode = "kubernetes-workload"`;
 - fresh node evidence exists for the Pod's scheduled node;
 - the node evidence `node_uid` matches the TokenReview node UID when both are
   present.
@@ -40,7 +41,7 @@ policy behavior:
 | Symptom | Likely cause | Operator action |
 | --- | --- | --- |
 | `attestation verification failed` before policy evaluation | TokenReview, audience, service account, Pod lookup, or pod binding failed | Check Kubernetes API reachability, broker service account RBAC, projected token audience, and Pod UID. |
-| `subject evidence is required` | Plugin sent no recognized evidence | Confirm the caller is using the intended evidence mode. Kubernetes evidence collection in the plugin is still a follow-on. |
+| `subject evidence is required` | Plugin sent no recognized evidence | Confirm the caller is using the intended evidence mode and that the broker verifier matches that mode. |
 | `subject is not allowed` | Verified subject is absent from the development policy | Add the normalized subject, for example `openbao.openbao`, then restart or reload through the supported flow. |
 | `subject is revoked` | Broker subject was revoked | Re-enroll or intentionally keep the subject denied. |
 | `node evidence is missing` | No evidence record for the Pod node | Publish fresh node evidence for that node or investigate node-agent health. |
@@ -126,7 +127,6 @@ provider.
 
 ## Current Gaps
 
-- Plugin-side Kubernetes evidence collection is not implemented yet.
 - Production Kubernetes RBAC and manifests are not included yet.
 - There is no production node attestation agent yet.
 - `fake-local` node evidence is for tests and local development only.

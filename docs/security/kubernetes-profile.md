@@ -170,7 +170,6 @@ Current tests cover:
 This profile does not yet provide:
 
 - Kubernetes RBAC or deployment manifests;
-- plugin-side Kubernetes evidence collection;
 - a production node attestation agent;
 - SPIFFE/SPIRE SVID verification;
 - AWS, Azure, or Google trusted-launch verification;

@@ -22,6 +22,8 @@ const (
 	configKeyKeyVersion          = "key_version"
 	configKeyNodeID              = "node_id"
 	configKeyPolicyID            = "policy_id"
+	configKeyEvidenceMode        = "evidence_mode"
+	configKeyKubernetesTokenFile = "kubernetes_token_file" // #nosec G101 -- config key name only.
 	configKeyStatePath           = "state_path"
 	configKeyTPMDevice           = "tpm_device"
 )
@@ -34,6 +36,16 @@ const (
 	ModeBroker Mode = "broker"
 	// ModeLocalTPM unwraps the local key through a TPM sealed object.
 	ModeLocalTPM Mode = "local-tpm"
+)
+
+// EvidenceMode selects which broker evidence envelope the plugin emits.
+type EvidenceMode string
+
+const (
+	// EvidenceModeDevelopmentSubject emits the M2 development subject claim.
+	EvidenceModeDevelopmentSubject EvidenceMode = "development-subject"
+	// EvidenceModeKubernetesWorkload emits projected service account token evidence.
+	EvidenceModeKubernetesWorkload EvidenceMode = "kubernetes-workload"
 )
 
 // Config is the strict wrapper configuration parsed from OpenBao seal config.
@@ -50,6 +62,8 @@ type Config struct {
 	KeyVersion           uint32
 	NodeID               string
 	PolicyID             string
+	EvidenceMode         EvidenceMode
+	KubernetesTokenFile  string
 	StatePath            string
 	TPMDevice            string
 }
@@ -72,6 +86,8 @@ func parseConfig(values map[string]string) (Config, error) {
 		KeyID:                strings.TrimSpace(values[configKeyKeyID]),
 		NodeID:               strings.TrimSpace(values[configKeyNodeID]),
 		PolicyID:             strings.TrimSpace(values[configKeyPolicyID]),
+		EvidenceMode:         EvidenceMode(strings.TrimSpace(values[configKeyEvidenceMode])),
+		KubernetesTokenFile:  strings.TrimSpace(values[configKeyKubernetesTokenFile]),
 		StatePath:            strings.TrimSpace(values[configKeyStatePath]),
 		TPMDevice:            strings.TrimSpace(values[configKeyTPMDevice]),
 	}
@@ -99,21 +115,12 @@ func parseConfig(values map[string]string) (Config, error) {
 func (c Config) Validate() error {
 	switch c.Mode {
 	case ModeBroker:
-		if c.BrokerAddress == "" {
-			return fmt.Errorf("broker_addr is required: %w", wrappingConfigError())
-		}
-		if c.NodeID == "" {
-			return fmt.Errorf("node_id is required for broker: %w", wrappingConfigError())
-		}
-		if (c.BrokerClientCertPath == "") != (c.BrokerClientKeyPath == "") {
-			return fmt.Errorf("broker_client_cert and broker_client_key must be configured together: %w", wrappingConfigError())
+		if err := c.validateBrokerConfig(); err != nil {
+			return err
 		}
 	case ModeLocalTPM:
-		if c.StatePath == "" {
-			return fmt.Errorf("state_path is required: %w", wrappingConfigError())
-		}
-		if c.KeyID == "" {
-			return fmt.Errorf("key_id is required for local-tpm: %w", wrappingConfigError())
+		if err := c.validateLocalTPMConfig(); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("mode must be %q or %q: %w", ModeBroker, ModeLocalTPM, wrappingConfigError())
@@ -139,6 +146,50 @@ func (c Config) Validate() error {
 	return nil
 }
 
+func (c Config) validateBrokerConfig() error {
+	if c.BrokerAddress == "" {
+		return fmt.Errorf("broker_addr is required: %w", wrappingConfigError())
+	}
+	if c.NodeID == "" {
+		return fmt.Errorf("node_id is required for broker: %w", wrappingConfigError())
+	}
+	if (c.BrokerClientCertPath == "") != (c.BrokerClientKeyPath == "") {
+		return fmt.Errorf("broker_client_cert and broker_client_key must be configured together: %w", wrappingConfigError())
+	}
+	return c.validateBrokerEvidenceMode()
+}
+
+func (c Config) validateLocalTPMConfig() error {
+	if c.StatePath == "" {
+		return fmt.Errorf("state_path is required: %w", wrappingConfigError())
+	}
+	if c.KeyID == "" {
+		return fmt.Errorf("key_id is required for local-tpm: %w", wrappingConfigError())
+	}
+	return nil
+}
+
+func (c Config) validateBrokerEvidenceMode() error {
+	switch c.BrokerEvidenceMode() {
+	case EvidenceModeDevelopmentSubject, EvidenceModeKubernetesWorkload:
+		return nil
+	default:
+		return fmt.Errorf("evidence_mode must be %q or %q: %w",
+			EvidenceModeDevelopmentSubject,
+			EvidenceModeKubernetesWorkload,
+			wrappingConfigError(),
+		)
+	}
+}
+
+// BrokerEvidenceMode returns the configured broker evidence mode.
+func (c Config) BrokerEvidenceMode() EvidenceMode {
+	if c.EvidenceMode == "" {
+		return EvidenceModeDevelopmentSubject
+	}
+	return c.EvidenceMode
+}
+
 // ConfiguredKeyID returns a stable key reference if the config includes one.
 func (c Config) ConfiguredKeyID() string {
 	if c.KeyID == "" || c.KeyVersion == 0 {
@@ -161,7 +212,7 @@ func knownConfigKey(key string) bool {
 		return true
 	case configKeyKeyID, configKeyKeyVersion, configKeyPolicyID:
 		return true
-	case configKeyNodeID:
+	case configKeyNodeID, configKeyEvidenceMode, configKeyKubernetesTokenFile:
 		return true
 	case configKeyStatePath, configKeyTPMDevice:
 		return true

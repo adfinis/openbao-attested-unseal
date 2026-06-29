@@ -49,6 +49,38 @@ func TestParseConfigAcceptsBroker(t *testing.T) {
 	if !config.BrokerPlaintext {
 		t.Fatal("BrokerPlaintext = false, want true")
 	}
+	if config.BrokerEvidenceMode() != EvidenceModeDevelopmentSubject {
+		t.Fatalf("BrokerEvidenceMode() = %q, want development-subject", config.BrokerEvidenceMode())
+	}
+}
+
+func TestParseConfigAcceptsBrokerKubernetesEvidence(t *testing.T) {
+	config, err := parseConfig(map[string]string{
+		configKeyMode:          string(ModeBroker),
+		configKeyBrokerAddress: "unix:///run/bao-unseald/broker.sock",
+		configKeyClusterID:     "prod-eu1",
+		configKeyNodeID:        "openbao.openbao",
+		configKeyEvidenceMode:  string(EvidenceModeKubernetesWorkload),
+	})
+	if err != nil {
+		t.Fatalf("parseConfig returned error: %v", err)
+	}
+	if config.BrokerEvidenceMode() != EvidenceModeKubernetesWorkload {
+		t.Fatalf("BrokerEvidenceMode() = %q, want kubernetes-workload", config.BrokerEvidenceMode())
+	}
+}
+
+func TestParseConfigRejectsUnknownBrokerEvidenceMode(t *testing.T) {
+	_, err := parseConfig(map[string]string{
+		configKeyMode:          string(ModeBroker),
+		configKeyBrokerAddress: "unix:///run/bao-unseald/broker.sock",
+		configKeyClusterID:     "prod-eu1",
+		configKeyNodeID:        "node-a",
+		configKeyEvidenceMode:  "surprise",
+	})
+	if !errors.Is(err, wrapping.ErrInvalidParameter) {
+		t.Fatalf("parseConfig error = %v, want ErrInvalidParameter", err)
+	}
 }
 
 func TestParseConfigAcceptsLocalTPM(t *testing.T) {

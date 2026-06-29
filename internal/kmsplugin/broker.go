@@ -7,7 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
+	k8sprovider "github.com/adfinis/openbao-attested-unseal/internal/attestation/providers/kubernetes"
+	runtimeconfig "github.com/adfinis/openbao-attested-unseal/internal/config"
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	wrapping "github.com/openbao/go-kms-wrapping/v2"
@@ -57,11 +60,15 @@ func (b *brokerBackend) Encrypt(ctx context.Context, req EncryptRequest) (Encryp
 	if err != nil {
 		return EncryptResponse{}, err
 	}
+	evidence, err := b.evidence(challenge.GetChallengeId())
+	if err != nil {
+		return EncryptResponse{}, err
+	}
 	resp, err := b.client.Wrap(ctx, &protocolv1.WrapRequest{
 		RequestedKey: requested,
 		Plaintext:    req.Plaintext,
 		Aad:          req.AAD,
-		Evidence:     b.evidence(challenge.GetChallengeId()),
+		Evidence:     evidence,
 	})
 	if err != nil {
 		return EncryptResponse{}, fmt.Errorf("broker wrap call failed: %w", err)
@@ -80,10 +87,14 @@ func (b *brokerBackend) Decrypt(ctx context.Context, req DecryptRequest) (Decryp
 	if err != nil {
 		return DecryptResponse{}, err
 	}
+	evidence, err := b.evidence(challenge.GetChallengeId())
+	if err != nil {
+		return DecryptResponse{}, err
+	}
 	resp, err := b.client.Unwrap(ctx, &protocolv1.UnwrapRequest{
 		Blob:     blobInfoToProto(req.Blob),
 		Aad:      req.AAD,
-		Evidence: b.evidence(challenge.GetChallengeId()),
+		Evidence: evidence,
 	})
 	if err != nil {
 		return DecryptResponse{}, fmt.Errorf("broker unwrap call failed: %w", err)
@@ -149,19 +160,44 @@ func (b *brokerBackend) challenge(
 	return challenge, nil
 }
 
-func (b *brokerBackend) evidence(challengeID string) *protocolv1.EvidenceEnvelope {
-	return &protocolv1.EvidenceEnvelope{
-		Provider:    protocolv1.AttestationProvider_ATTESTATION_PROVIDER_UNSPECIFIED,
-		Format:      "development-subject",
-		ChallengeId: challengeID,
-		NormalizedClaims: []*protocolv1.Claim{
-			{
-				Namespace: developmentSubjectClaimNamespace,
-				Name:      developmentSubjectClaimName,
-				Value:     b.config.NodeID,
+func (b *brokerBackend) evidence(challengeID string) (*protocolv1.EvidenceEnvelope, error) {
+	switch b.config.BrokerEvidenceMode() {
+	case EvidenceModeDevelopmentSubject:
+		return &protocolv1.EvidenceEnvelope{
+			Provider:    protocolv1.AttestationProvider_ATTESTATION_PROVIDER_UNSPECIFIED,
+			Format:      "development-subject",
+			ChallengeId: challengeID,
+			NormalizedClaims: []*protocolv1.Claim{
+				{
+					Namespace: developmentSubjectClaimNamespace,
+					Name:      developmentSubjectClaimName,
+					Value:     b.config.NodeID,
+				},
 			},
-		},
+		}, nil
+	case EvidenceModeKubernetesWorkload:
+		token, err := readKubernetesWorkloadToken(b.config.KubernetesTokenFile)
+		if err != nil {
+			return nil, err
+		}
+		return k8sprovider.NewEvidenceEnvelope(challengeID, token)
+	default:
+		return nil, fmt.Errorf("%w: unsupported evidence mode %q", ErrBackendUnavailable, b.config.BrokerEvidenceMode())
 	}
+}
+
+func readKubernetesWorkloadToken(path string) (string, error) {
+	path = runtimeconfig.KubernetesBearerTokenFile(path)
+	// #nosec G304 -- Kubernetes token path is operator supplied plugin configuration.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read Kubernetes workload token file: %w", err)
+	}
+	token := strings.TrimSpace(string(raw))
+	if token == "" {
+		return "", errors.New("kubernetes workload token file is empty")
+	}
+	return token, nil
 }
 
 func brokerDialOptions(config Config) ([]grpc.DialOption, error) {
