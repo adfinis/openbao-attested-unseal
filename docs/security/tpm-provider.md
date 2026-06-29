@@ -1,9 +1,3 @@
----
-title: "TPM Provider Security Notes"
-description: "Security claims and limits for the generic TPM provider."
-weight: 20
----
-
 # TPM Provider Security Notes
 
 Status: draft

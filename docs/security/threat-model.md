@@ -1,9 +1,3 @@
----
-title: "Threat Model"
-description: "Threat model for OpenBao attested unseal with TPM as one backend."
-weight: 10
----
-
 # Threat Model: `openbao-attested-unseal`
 
 Status: draft

@@ -49,8 +49,3 @@ go_licenses_empty :=
 go_licenses_space := $(go_licenses_empty) $(go_licenses_empty)
 go_licenses_comma := ,
 GO_LICENSES_ALLOWED_CSV := $(subst $(go_licenses_space),$(go_licenses_comma),$(strip $(GO_LICENSES_ALLOWED)))
-
-HUGO_VERSION ?= v0.151.2
-HUGO_RUN := GOFLAGS="-mod=mod" "$(GO)" run github.com/gohugoio/hugo@$(HUGO_VERSION)
-DOCS_BASE_URL ?= https://adfinis.github.io/openbao-attested-unseal/
-DOCS_OUT ?= public

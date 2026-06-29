@@ -26,6 +26,10 @@ make test-e2e
 make build
 ```
 
+## Docs
+
+Repository documentation lives in [docs](docs/README.md) as plain Markdown.
+
 ## Status
 
 Do not use this project for production unseal yet. The threat model, recovery

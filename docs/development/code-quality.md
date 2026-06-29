@@ -1,9 +1,3 @@
----
-title: "Code Quality"
-description: "Strict typed Go conventions and local quality gates."
-weight: 10
----
-
 # Code Quality
 
 This project handles unseal and wrapping-key lifecycle paths. The codebase

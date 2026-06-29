@@ -1,7 +1,0 @@
-{{- $toc := .TableOfContents -}}
-{{- if and $toc (gt (len ($toc | plainify | strings.TrimSpace)) 0) -}}
-  <div class="page-toc">
-    <p class="page-toc__label">On This Page</p>
-    {{ $toc }}
-  </div>
-{{- end -}}

@@ -1,9 +1,3 @@
----
-title: "CLI"
-description: "Command binary names and current behavior."
-weight: 10
----
-
 # CLI
 
 All binaries support `help` and `version`:

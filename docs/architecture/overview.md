@@ -1,9 +1,3 @@
----
-title: "Overview"
-description: "High-level architecture placeholder."
-weight: 10
----
-
 # Overview
 
 The project has three planned command surfaces:

@@ -1,9 +1,3 @@
----
-title: "Local TPM Mode"
-description: "Provisioning and runtime configuration for local TPM unseal."
-weight: 30
----
-
 # Local TPM Mode
 
 Status: draft

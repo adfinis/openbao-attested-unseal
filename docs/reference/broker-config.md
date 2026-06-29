@@ -1,9 +1,3 @@
----
-title: "Broker Configuration"
-description: "Current bao-unseald broker configuration fields."
-weight: 20
----
-
 # Broker Configuration
 
 `bao-unseald` reads JSON configuration in M2.
