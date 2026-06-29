@@ -61,12 +61,16 @@ func (w *Wrapper) SetConfig(ctx context.Context, options ...wrapping.Option) (*w
 	}
 	w.config = config
 	w.backend = backend
+	keyID, err := backend.KeyID(ctx)
+	if err != nil {
+		keyID = config.ConfiguredKeyID()
+	}
 
 	return &wrapping.WrapperConfig{
 		Metadata: map[string]string{
 			"broker_addr": config.BrokerAddress,
 			"cluster_id":  config.ClusterID,
-			"key_id":      config.ConfiguredKeyID(),
+			"key_id":      keyID,
 			"mode":        string(config.Mode),
 			"state_path":  config.StatePath,
 			"tpm_device":  config.TPMDevice,

@@ -86,11 +86,19 @@ local-tpm/
     <key-id>/
       v1.sealed
       v1.metadata.json
+      v2.sealed
+      v2.metadata.json
       pcr-policy.json
 ```
 
 State files are expected to be private to the OpenBao or provisioning user. The
 loader rejects group or world accessible files and symlinked state paths.
+
+At runtime the plugin loads usable local versions for the configured
+`cluster_id` and `key_id`. Metadata status selects the active version for new
+wraps, while `decrypt-only` versions remain available for old OpenBao seal
+blobs. `key_version` is accepted for compatibility with earlier configs, but it
+is not the active-key selector after rotation.
 
 ## OpenBao Seal Configuration
 

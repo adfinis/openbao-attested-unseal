@@ -65,6 +65,9 @@ func (productionFactory) NewBackend(ctx context.Context, config Config) (Backend
 	if config.Mode == ModeLocalTPM {
 		return newLocalTPMBackend(ctx, config)
 	}
+	if config.Mode == ModeBroker {
+		return newBrokerBackend(ctx, config)
+	}
 	return unavailableBackend{config: config}, nil
 }
 

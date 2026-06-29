@@ -65,3 +65,39 @@ The M2 policy document is intentionally narrow:
 
 Only `development-subject` mode is implemented in M2. Real attestation policy
 arrives in later milestones.
+
+## OpenBao Seal Configuration
+
+Broker mode lets the KMS plugin call `bao-unseald` on an internal trusted
+network instead of loading local TPM state:
+
+```hcl
+seal "attested-unseal" {
+  mode        = "broker"
+  broker_addr = "bao-unseald.openbao.svc:8201"
+  cluster_id  = "prod-eu1"
+  node_id     = "node-a"
+}
+```
+
+`node_id` is the subject presented to the broker challenge flow. In the current
+development policy profile it must match an allowed development subject or a
+subject loaded from the default policy file.
+
+Production broker connections should use TLS, and normally mTLS:
+
+```hcl
+seal "attested-unseal" {
+  mode                   = "broker"
+  broker_addr            = "bao-unseald.openbao.svc:8201"
+  broker_ca_cert         = "/etc/openbao-attested-unseal/ca.crt"
+  broker_tls_server_name = "bao-unseald.openbao.svc"
+  broker_client_cert     = "/etc/openbao-attested-unseal/client.crt"
+  broker_client_key      = "/etc/openbao-attested-unseal/client.key"
+  cluster_id             = "prod-eu1"
+  node_id                = "node-a"
+}
+```
+
+`broker_plaintext = "true"` is available for local Docker and test harnesses
+only. It should not be used for production broker listeners.

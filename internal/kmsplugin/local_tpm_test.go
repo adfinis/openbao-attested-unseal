@@ -86,6 +86,113 @@ func TestWrapperLocalTPMEncryptDecryptWithSWTPM(t *testing.T) {
 	}
 }
 
+func TestWrapperLocalTPMUsesActiveVersionAndDecryptsOldVersion(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("swtpm integration is not supported on Windows")
+	}
+	if _, err := exec.LookPath("swtpm"); err != nil {
+		t.Skip("swtpm is not installed")
+	}
+	socketPath, stop := startSWTPMForPlugin(t)
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	statePath := t.TempDir()
+	v1 := keyring.KeyRef{ClusterID: "prod-eu1", KeyID: "root", Version: 1}
+	v2 := keyring.KeyRef{ClusterID: "prod-eu1", KeyID: "root", Version: 2}
+	v1Material := bytes.Repeat([]byte{0x41}, keyring.KeySize)
+	v2Material := bytes.Repeat([]byte{0x42}, keyring.KeySize)
+	oldBlob := encryptTestBlob(t, v1, v1Material, []byte("old seal plaintext"), []byte("aad"))
+	for _, version := range []keyring.KeyVersion{
+		{
+			Ref:       v1,
+			Status:    keyring.StatusDecryptOnly,
+			Algorithm: keyring.AlgorithmAES256GCM,
+			PolicyID:  "secureboot",
+			Material:  v1Material,
+		},
+		{
+			Ref:       v2,
+			Status:    keyring.StatusActive,
+			Algorithm: keyring.AlgorithmAES256GCM,
+			PolicyID:  "secureboot",
+			Material:  v2Material,
+		},
+	} {
+		if _, err := tpmlocal.StoreLocalKey(
+			ctx,
+			statePath,
+			tpmlocal.Device{Path: socketPath},
+			version,
+			tpmlocal.PolicyModeTPMOnly,
+			tpmlocal.PCRSelection{},
+		); err != nil {
+			t.Fatalf("StoreLocalKey %s returned error: %v", version.Ref.String(), err)
+		}
+	}
+
+	wrapper := NewWrapper()
+	config, err := wrapper.SetConfig(ctx, wrapping.WithConfigMap(map[string]string{
+		configKeyMode:       string(ModeLocalTPM),
+		configKeyClusterID:  v1.ClusterID,
+		configKeyKeyID:      v1.KeyID,
+		configKeyKeyVersion: "1",
+		configKeyPolicyID:   "secureboot",
+		configKeyStatePath:  statePath,
+		configKeyTPMDevice:  socketPath,
+	}))
+	if err != nil {
+		t.Fatalf("SetConfig returned error: %v", err)
+	}
+	if config.GetMetadata()["key_id"] != v2.String() {
+		t.Fatalf("wrapper metadata key_id = %q, want %q", config.GetMetadata()["key_id"], v2.String())
+	}
+	defer func() {
+		_ = wrapper.Finalize(context.Background())
+	}()
+
+	newBlob, err := wrapper.Encrypt(ctx, []byte("new seal plaintext"), wrapping.WithAad([]byte("aad")))
+	if err != nil {
+		t.Fatalf("Encrypt returned error: %v", err)
+	}
+	if newBlob.GetKeyInfo().GetKeyId() != v2.String() {
+		t.Fatalf("new blob key = %q, want %q", newBlob.GetKeyInfo().GetKeyId(), v2.String())
+	}
+	oldPlaintext, err := wrapper.Decrypt(ctx, oldBlob, wrapping.WithAad([]byte("aad")))
+	if err != nil {
+		t.Fatalf("Decrypt old blob returned error: %v", err)
+	}
+	if string(oldPlaintext) != "old seal plaintext" {
+		t.Fatalf("old plaintext = %q, want old seal plaintext", oldPlaintext)
+	}
+}
+
+func encryptTestBlob(
+	t *testing.T,
+	ref keyring.KeyRef,
+	material []byte,
+	plaintext []byte,
+	aad []byte,
+) *wrapping.BlobInfo {
+	t.Helper()
+	ring, err := keyring.NewRing(keyring.KeyVersion{
+		Ref:       ref,
+		Status:    keyring.StatusActive,
+		Algorithm: keyring.AlgorithmAES256GCM,
+		PolicyID:  "secureboot",
+		Material:  material,
+	})
+	if err != nil {
+		t.Fatalf("NewRing returned error: %v", err)
+	}
+	blob, err := ring.Encrypt(context.Background(), plaintext, aad)
+	if err != nil {
+		t.Fatalf("Encrypt returned error: %v", err)
+	}
+	return blob
+}
+
 func startSWTPMForPlugin(t *testing.T) (string, func()) {
 	t.Helper()
 	baseDir, err := os.MkdirTemp("/tmp", "bao-swtpm-")

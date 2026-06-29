@@ -31,18 +31,23 @@ func TestParseConfigRejectsUnknownFields(t *testing.T) {
 
 func TestParseConfigAcceptsBroker(t *testing.T) {
 	config, err := parseConfig(map[string]string{
-		configKeyMode:          string(ModeBroker),
-		configKeyBrokerAddress: "unix:///run/bao-unseald/broker.sock",
-		configKeyClusterID:     "prod-eu1",
-		configKeyKeyID:         "root",
-		configKeyKeyVersion:    "7",
-		configKeyPolicyID:      "secureboot",
+		configKeyMode:            string(ModeBroker),
+		configKeyBrokerAddress:   "unix:///run/bao-unseald/broker.sock",
+		configKeyBrokerPlaintext: "true",
+		configKeyClusterID:       "prod-eu1",
+		configKeyKeyID:           "root",
+		configKeyKeyVersion:      "7",
+		configKeyNodeID:          "node-a",
+		configKeyPolicyID:        "secureboot",
 	})
 	if err != nil {
 		t.Fatalf("parseConfig returned error: %v", err)
 	}
 	if got := config.ConfiguredKeyID(); got != "prod-eu1/root/v7" {
 		t.Fatalf("ConfiguredKeyID() = %q, want prod-eu1/root/v7", got)
+	}
+	if !config.BrokerPlaintext {
+		t.Fatal("BrokerPlaintext = false, want true")
 	}
 }
 
@@ -64,6 +69,22 @@ func TestParseConfigAcceptsLocalTPM(t *testing.T) {
 	}
 	if config.TPMDevice != "/dev/tpmrm0" {
 		t.Fatalf("TPMDevice = %q, want /dev/tpmrm0", config.TPMDevice)
+	}
+}
+
+func TestParseConfigAcceptsLocalTPMWithoutKeyVersion(t *testing.T) {
+	config, err := parseConfig(map[string]string{
+		configKeyMode:      string(ModeLocalTPM),
+		configKeyClusterID: "prod-eu1",
+		configKeyKeyID:     "root",
+		configKeyStatePath: "/var/lib/openbao/attested-unseal",
+		configKeyTPMDevice: "/dev/tpmrm0",
+	})
+	if err != nil {
+		t.Fatalf("parseConfig returned error: %v", err)
+	}
+	if got := config.ConfiguredKeyID(); got != "" {
+		t.Fatalf("ConfiguredKeyID() = %q, want empty without key_version", got)
 	}
 }
 

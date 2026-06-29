@@ -10,6 +10,8 @@ import (
 	wrapping "github.com/openbao/go-kms-wrapping/v2"
 )
 
+const testWrapperKeyIDV1 = "prod-eu1/root/v1"
+
 func TestWrapperEncryptBeforeSetConfigFailsClosed(t *testing.T) {
 	wrapper := NewWrapperWithFactory(inMemoryFactory{backend: newTestInMemoryBackend(t)})
 	_, err := wrapper.Encrypt(context.Background(), []byte("plaintext"))
@@ -65,8 +67,8 @@ func TestWrapperLifecycleDelegatesToBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encrypt returned error: %v", err)
 	}
-	if blob.GetKeyInfo().GetKeyId() != "prod-eu1/root/v1" {
-		t.Fatalf("key ID = %q, want prod-eu1/root/v1", blob.GetKeyInfo().GetKeyId())
+	if blob.GetKeyInfo().GetKeyId() != testWrapperKeyIDV1 {
+		t.Fatalf("key ID = %q, want %s", blob.GetKeyInfo().GetKeyId(), testWrapperKeyIDV1)
 	}
 	if blob.GetKeyInfo().GetMechanism() != keyring.BlobMechanismAES256GCM {
 		t.Fatalf("mechanism = %d, want %d", blob.GetKeyInfo().GetMechanism(), keyring.BlobMechanismAES256GCM)
@@ -82,8 +84,8 @@ func TestWrapperLifecycleDelegatesToBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("KeyId returned error: %v", err)
 	}
-	if keyID != "prod-eu1/root/v1" {
-		t.Fatalf("key ID = %q, want prod-eu1/root/v1", keyID)
+	if keyID != testWrapperKeyIDV1 {
+		t.Fatalf("key ID = %q, want %s", keyID, testWrapperKeyIDV1)
 	}
 	if err := wrapper.Finalize(context.Background()); err != nil {
 		t.Fatalf("Finalize returned error: %v", err)
@@ -111,6 +113,7 @@ func validConfigMap() map[string]string {
 		configKeyClusterID:     "prod-eu1",
 		configKeyKeyID:         "root",
 		configKeyKeyVersion:    "1",
+		configKeyNodeID:        "node-a",
 		configKeyPolicyID:      "secureboot",
 	}
 }

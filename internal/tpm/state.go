@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -146,6 +147,61 @@ func LoadLocalRing(
 	ring, err := keyring.NewRing(version)
 	if err != nil {
 		return nil, LocalKeyMetadata{}, err
+	}
+	return ring, metadata, nil
+}
+
+// LoadLocalKeyring unseals every locally usable TPM key version for one key ID.
+func LoadLocalKeyring(
+	ctx context.Context,
+	statePath string,
+	device Device,
+	clusterID string,
+	keyID string,
+) (*keyring.Ring, []LocalKeyMetadata, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if err := keyring.ValidateIdentifier(clusterID); err != nil {
+		return nil, nil, fmt.Errorf("invalid cluster ID: %w", err)
+	}
+	if err := keyring.ValidateIdentifier(keyID); err != nil {
+		return nil, nil, fmt.Errorf("invalid key ID: %w", err)
+	}
+	refs, err := localUsableKeyRefs(statePath, clusterID, keyID)
+	if err != nil {
+		return nil, nil, err
+	}
+	rwc, err := device.Open(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		_ = rwc.Close()
+	}()
+	versions := make([]keyring.KeyVersion, 0, len(refs))
+	metadata := make([]LocalKeyMetadata, 0, len(refs))
+	for _, ref := range refs {
+		sealed, record, err := ReadLocalState(statePath, ref)
+		if err != nil {
+			return nil, nil, err
+		}
+		material, err := UnsealKey(rwc, sealed)
+		if err != nil {
+			return nil, nil, fmt.Errorf("unseal local TPM key %s: %w", ref.String(), err)
+		}
+		versions = append(versions, keyring.KeyVersion{
+			Ref:       ref,
+			Status:    keyring.Status(record.Status),
+			Algorithm: keyring.Algorithm(record.Algorithm),
+			PolicyID:  record.PolicyID,
+			Material:  material,
+		})
+		metadata = append(metadata, record)
+	}
+	ring, err := keyring.NewRing(versions...)
+	if err != nil {
+		return nil, nil, err
 	}
 	return ring, metadata, nil
 }
@@ -301,6 +357,60 @@ func localKeyPaths(statePath string, ref keyring.KeyRef) (keyPaths, error) {
 		metadata: filepath.Join(keyDir, version+".metadata.json"),
 		pcr:      filepath.Join(keyDir, "pcr-policy.json"),
 	}, nil
+}
+
+func localUsableKeyRefs(statePath string, clusterID string, keyID string) ([]keyring.KeyRef, error) {
+	if err := validateStateRoot(statePath); err != nil {
+		return nil, err
+	}
+	keyDir := filepath.Join(statePath, LocalStateDir, "keys", keyID)
+	info, err := os.Lstat(keyDir)
+	if err != nil {
+		return nil, fmt.Errorf("inspect local TPM key directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%w: local TPM key directory must not be a symlink", keyring.ErrInvalidMetadata)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%w: local TPM key path is not a directory", keyring.ErrInvalidMetadata)
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return nil, fmt.Errorf("%w: local TPM key directory must not be group/world writable", keyring.ErrInvalidMetadata)
+	}
+	matches, err := filepath.Glob(filepath.Join(keyDir, "v*.metadata.json"))
+	if err != nil {
+		return nil, fmt.Errorf("list local TPM metadata: %w", err)
+	}
+	slices.Sort(matches)
+	refs := make([]keyring.KeyRef, 0, len(matches))
+	for _, path := range matches {
+		metadata, err := readLocalKeyMetadata(path)
+		if err != nil {
+			return nil, err
+		}
+		ref := keyring.KeyRef{
+			ClusterID: metadata.ClusterID,
+			KeyID:     metadata.KeyID,
+			Version:   metadata.Version,
+		}
+		if err := metadata.Validate(ref); err != nil {
+			return nil, err
+		}
+		if ref.ClusterID != clusterID || ref.KeyID != keyID {
+			return nil, fmt.Errorf("%w: local TPM metadata key reference mismatch", keyring.ErrInvalidMetadata)
+		}
+		switch keyring.Status(metadata.Status) {
+		case keyring.StatusActive, keyring.StatusDecryptOnly:
+			refs = append(refs, ref)
+		case keyring.StatusPending, keyring.StatusRetired:
+		default:
+			return nil, fmt.Errorf("%w: unsupported local key status", keyring.ErrInvalidMetadata)
+		}
+	}
+	if len(refs) == 0 {
+		return nil, fmt.Errorf("%w: no usable local TPM keys found", keyring.ErrKeyNotFound)
+	}
+	return refs, nil
 }
 
 func readSealedBlob(path string) (SealedBlob, error) {
