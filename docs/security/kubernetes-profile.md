@@ -9,6 +9,11 @@ Kubernetes workload identity with node evidence already trusted by the broker.
 It is intended for the beta project shape and does not yet include production
 manifests, RBAC examples, or a real node attestation agent.
 
+See [Kubernetes Profile Examples](../reference/kubernetes-profile.md) for
+configuration snippets and
+[Kubernetes Profile Runbook](../operations/kubernetes-profile-runbook.md) for
+failure triage, revocation, and rotation notes.
+
 ## Profile Summary
 
 | Field | Value |
@@ -165,6 +170,7 @@ Current tests cover:
 This profile does not yet provide:
 
 - Kubernetes RBAC or deployment manifests;
+- plugin-side Kubernetes evidence collection;
 - a production node attestation agent;
 - SPIFFE/SPIRE SVID verification;
 - AWS, Azure, or Google trusted-launch verification;

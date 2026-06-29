@@ -1,4 +1,5 @@
 # Operations
 
-Operational runbooks will be added after the enrollment, recovery, and rotation
-protocols are designed.
+Operational runbooks are added as project surfaces become executable.
+
+- [Kubernetes Profile Runbook](kubernetes-profile-runbook.md)

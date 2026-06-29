@@ -53,6 +53,9 @@ evidence freshness window. Pod-bound service account tokens are required unless
 pod-bound tokens, the broker also performs an independent Pod API lookup and
 rejects evidence if the token pod UID or node name does not match the live Pod.
 
+See [Kubernetes Profile Examples](kubernetes-profile.md) for the beta
+Kubernetes profile contract and current plugin-side limitations.
+
 `api_server`, `ca_cert_file`, and `bearer_token_file` are optional for
 in-cluster deployments. If omitted, `bao-unseald` derives the API endpoint from
 the Kubernetes service environment and uses the mounted service account token
