@@ -6,12 +6,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -249,6 +251,155 @@ func TestKubernetesBrokerManifestPublishesFakeNodeEvidence(t *testing.T) {
 	}
 }
 
+func TestKubernetesOpenBaoAutoUnsealWithBrokerManifest(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("kind-backed E2E is not supported on Windows")
+	}
+	requireDocker(t)
+	requireKind(t)
+	requireKubectl(t)
+
+	repoRoot := findRepoRoot(t)
+	openbaoImage := envDefault("OPENBAO_E2E_IMAGE", defaultOpenBaoImage)
+	pullImageIfMissing(t, openbaoImage)
+
+	workDir := newE2EWorkDir(t)
+	clusterName := fmt.Sprintf("openbao-au-kind-%d-%d", time.Now().UnixNano(), os.Getpid())
+	kubeconfig := filepath.Join(workDir, "kind.kubeconfig")
+	keep := os.Getenv("OPENBAO_E2E_KEEP") == "1"
+	if !keep {
+		t.Cleanup(func() { _ = os.RemoveAll(workDir) })
+		t.Cleanup(func() {
+			output, err := kindOutput("delete", "cluster", "--name", clusterName)
+			if err != nil {
+				t.Logf("kind delete cluster returned error: %v: %s", err, strings.TrimSpace(output))
+			}
+		})
+	} else {
+		t.Logf("OPENBAO_E2E_KEEP=1; keeping kind cluster %s and work dir %s", clusterName, workDir)
+	}
+
+	createArgs := []string{"create", "cluster", "--name", clusterName, "--kubeconfig", kubeconfig, "--wait", "90s"}
+	if image := strings.TrimSpace(os.Getenv("OPENBAO_E2E_KIND_IMAGE")); image != "" {
+		createArgs = append(createArgs, "--image", image)
+	}
+	run(t, false, "kind", createArgs...)
+	kubectlEnv := append(os.Environ(), "KUBECONFIG="+kubeconfig)
+	kubectl := func(sensitive bool, args ...string) string {
+		t.Helper()
+		return runWithEnv(t, sensitive, "", kubectlEnv, "kubectl", args...)
+	}
+
+	nodeName := strings.TrimSpace(kubectl(false, "get", "nodes", "-o", "jsonpath={.items[0].metadata.name}"))
+	if nodeName == "" {
+		t.Fatal("kind cluster did not return a node name")
+	}
+	nodeUID := strings.TrimSpace(kubectl(false, "get", "node", nodeName, "-o", "jsonpath={.metadata.uid}"))
+	if nodeUID == "" {
+		t.Fatal("kind node did not return a UID")
+	}
+
+	dockerArch := dockerServerArch(t)
+	goarch := dockerGOARCH(t, dockerArch)
+	hostCtl := filepath.Join(workDir, "bao-unsealctl-host")
+	linuxBroker := filepath.Join(workDir, "bao-unseald-linux")
+	pluginPath := filepath.Join(workDir, "bao-kms-unseal")
+	buildBinary(t, repoRoot, hostCtl, "", "", "./cmd/bao-unsealctl")
+	buildBinary(t, repoRoot, linuxBroker, "linux", goarch, "./cmd/bao-unseald")
+	buildBinary(t, repoRoot, pluginPath, "linux", goarch, "./cmd/bao-kms-unseal")
+	chmod(t, hostCtl, 0o755)
+	chmod(t, linuxBroker, 0o755)
+	chmod(t, pluginPath, 0o755)
+
+	brokerImageTag := fmt.Sprintf("openbao-attested-unseal/bao-unseald:e2e-%d-%d", time.Now().UnixNano(), os.Getpid())
+	openbaoImageTag := fmt.Sprintf("openbao-attested-unseal/openbao:e2e-%d-%d", time.Now().UnixNano(), os.Getpid())
+	buildKindBrokerImage(t, workDir, linuxBroker, brokerImageTag)
+	buildKindOpenBaoImage(t, workDir, openbaoImage, pluginPath, openbaoImageTag)
+	if !keep {
+		t.Cleanup(func() { dockerIgnore(t, "image", "rm", "-f", brokerImageTag, openbaoImageTag) })
+	}
+	run(t, false, "kind", "load", "docker-image", "--name", clusterName, brokerImageTag)
+	run(t, false, "kind", "load", "docker-image", "--name", clusterName, openbaoImageTag)
+
+	rbacPath := filepath.Join(repoRoot, "deploy", "kubernetes", "rbac.yaml")
+	brokerManifestPath := writeKindBrokerManifest(
+		t,
+		workDir,
+		filepath.Join(repoRoot, "deploy", "kubernetes", "bao-unseald.yaml"),
+		brokerImageTag,
+	)
+	openBaoManifestPath := writeKindOpenBaoManifest(
+		t,
+		workDir,
+		openbaoImageTag,
+		sha256Hex(t, pluginPath),
+		nodeName,
+	)
+	kubectl(false, "apply", "-f", rbacPath)
+	kubectl(false, "apply", "-f", brokerManifestPath)
+	kubectl(false, "-n", kindNamespace, "rollout", "status", "deployment/bao-unseald", "--timeout=90s")
+
+	localPort := freeTCPPort(t)
+	stopForward := startKubectlPortForward(
+		t,
+		kubectlEnv,
+		kindNamespace,
+		"svc/bao-unseald",
+		fmt.Sprintf("%d:8443", localPort),
+	)
+	defer stopForward()
+
+	run(
+		t,
+		false,
+		hostCtl,
+		"k8s", "publish-node",
+		"-addr", fmt.Sprintf("127.0.0.1:%d", localPort),
+		"-plaintext",
+		"-cluster-id", "prod-eu1",
+		"-node-name", nodeName,
+		"-node-uid", nodeUID,
+		"-ttl", "10m",
+		"-format", "json",
+	)
+
+	kubectl(false, "apply", "-f", openBaoManifestPath)
+	waitForKindPodPhase(t, kubectlEnv, kindNamespace, kindOpenBaoPod, "Running", 90*time.Second)
+	before := waitForKindOpenBaoStatus(t, kubectlEnv, false, true, 90*time.Second)
+	assertStatus(t, before, false, true)
+
+	initJSON := kubectl(
+		true,
+		"-n", kindNamespace,
+		"exec", kindOpenBaoPod, "--",
+		"env", "BAO_ADDR=http://127.0.0.1:8200",
+		"bao", "operator", "init",
+		"-recovery-shares=1",
+		"-recovery-threshold=1",
+		"-format=json",
+	)
+	init := parseOpenBaoInit(t, initJSON)
+	if init.RootToken == "" {
+		t.Fatal("OpenBao init did not return a root token")
+	}
+	afterInit := waitForKindOpenBaoStatus(t, kubectlEnv, true, false, 90*time.Second)
+	assertStatus(t, afterInit, true, false)
+
+	restartCount := kindOpenBaoRestartCount(t, kubectlEnv)
+	output, err := kubectlOutputWithEnv(
+		kubectlEnv,
+		"-n", kindNamespace,
+		"exec", kindOpenBaoPod, "--",
+		"sh", "-c", "kill -TERM 1",
+	)
+	if err != nil {
+		t.Logf("kubectl kill output after requesting OpenBao restart: %s", strings.TrimSpace(output))
+	}
+	waitForKindOpenBaoRestart(t, kubectlEnv, restartCount, 90*time.Second)
+	afterRestart := waitForKindOpenBaoStatus(t, kubectlEnv, true, false, 90*time.Second)
+	assertStatus(t, afterRestart, true, false)
+}
+
 func requireKind(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("kind"); err != nil {
@@ -285,6 +436,20 @@ ENTRYPOINT ["/usr/local/bin/bao-unseald"]
 	docker(t, false, "build", "-t", imageTag, imageDir)
 }
 
+func buildKindOpenBaoImage(t *testing.T, dir string, baseImage string, pluginPath string, imageTag string) {
+	t.Helper()
+	imageDir := filepath.Join(dir, "openbao-image")
+	mkdirAll(t, imageDir, 0o700)
+	dockerfile := fmt.Sprintf(`FROM %s
+COPY --chmod=0755 bao-kms-unseal /plugins/bao-kms-unseal
+`, baseImage)
+	if err := os.WriteFile(filepath.Join(imageDir, "Dockerfile"), []byte(dockerfile), 0o600); err != nil {
+		t.Fatalf("WriteFile OpenBao Dockerfile returned error: %v", err)
+	}
+	copyFile(t, pluginPath, filepath.Join(imageDir, "bao-kms-unseal"), 0o755)
+	docker(t, false, "build", "-t", imageTag, imageDir)
+}
+
 func writeKindBrokerManifest(t *testing.T, dir string, sourcePath string, imageTag string) string {
 	t.Helper()
 	// #nosec G304 -- test reads a repository manifest selected by the harness.
@@ -300,6 +465,100 @@ func writeKindBrokerManifest(t *testing.T, dir string, sourcePath string, imageT
 	path := filepath.Join(dir, "bao-unseald.yaml")
 	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
 		t.Fatalf("WriteFile broker manifest returned error: %v", err)
+	}
+	return path
+}
+
+func writeKindOpenBaoManifest(
+	t *testing.T,
+	dir string,
+	imageTag string,
+	pluginSHA string,
+	nodeName string,
+) string {
+	t.Helper()
+	manifest := fmt.Sprintf(`apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-config
+  namespace: %s
+data:
+  openbao.hcl: |
+    plugin_directory = "/plugins"
+
+    plugin "kms" "attested-unseal" {
+      command   = "bao-kms-unseal"
+      sha256sum = %q
+    }
+
+    seal "attested-unseal" {
+      mode                  = "broker"
+      broker_addr           = "bao-unseald.openbao.svc:8443"
+      broker_plaintext      = "true"
+      cluster_id            = "prod-eu1"
+      node_id               = "openbao.openbao"
+      evidence_mode         = "kubernetes-workload"
+      kubernetes_token_file = "/var/run/secrets/openbao-attested-unseal/token"
+    }
+
+    storage "file" {
+      path = "/bao/file"
+    }
+
+    listener "tcp" {
+      address     = "0.0.0.0:8200"
+      tls_disable = true
+    }
+
+    api_addr = "http://127.0.0.1:8200"
+    ui = false
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: %s
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: openbao
+    app.kubernetes.io/part-of: openbao-attested-unseal
+spec:
+  serviceAccountName: %s
+  automountServiceAccountToken: false
+  nodeName: %s
+  containers:
+    - name: openbao
+      image: %s
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-lc", "exec bao server -config=/config/openbao.hcl"]
+      ports:
+        - name: api
+          containerPort: 8200
+      volumeMounts:
+        - name: config
+          mountPath: /config
+          readOnly: true
+        - name: data
+          mountPath: /bao
+        - name: workload-token
+          mountPath: /var/run/secrets/openbao-attested-unseal
+          readOnly: true
+  volumes:
+    - name: config
+      configMap:
+        name: openbao-config
+    - name: data
+      emptyDir: {}
+    - name: workload-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              path: token
+              audience: bao-unseald
+              expirationSeconds: 600
+`, kindNamespace, pluginSHA, kindOpenBaoPod, kindNamespace, kindOpenBaoSA, nodeName, imageTag)
+	path := filepath.Join(dir, "openbao.yaml")
+	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
+		t.Fatalf("WriteFile OpenBao manifest returned error: %v", err)
 	}
 	return path
 }
@@ -380,6 +639,115 @@ func startKubectlPortForward(
 	return func() {}
 }
 
+func waitForKindPodPhase(
+	t *testing.T,
+	env []string,
+	namespace string,
+	pod string,
+	wantPhase string,
+	timeout time.Duration,
+) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastOutput string
+	for time.Now().Before(deadline) {
+		output, err := kubectlOutputWithEnv(
+			env,
+			"-n", namespace,
+			"get", "pod", pod,
+			"-o", "jsonpath={.status.phase}",
+		)
+		if err == nil && strings.TrimSpace(output) == wantPhase {
+			return
+		}
+		lastOutput = strings.TrimSpace(output)
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("pod %s/%s did not reach phase %s: %s", namespace, pod, wantPhase, lastOutput)
+}
+
+func waitForKindOpenBaoStatus(
+	t *testing.T,
+	env []string,
+	initialized bool,
+	sealed bool,
+	timeout time.Duration,
+) baoStatus {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastStatus baoStatus
+	var lastOutput string
+	for time.Now().Before(deadline) {
+		status, output, ok := kindOpenBaoStatusJSON(env)
+		if ok {
+			lastStatus = status
+			lastOutput = output
+			if status.Initialized == initialized && status.Sealed == sealed {
+				return status
+			}
+		} else {
+			lastOutput = output
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf(
+		"OpenBao kind status initialized=%t sealed=%t, want initialized=%t sealed=%t output=%s",
+		lastStatus.Initialized,
+		lastStatus.Sealed,
+		initialized,
+		sealed,
+		lastOutput,
+	)
+	return baoStatus{}
+}
+
+func kindOpenBaoStatusJSON(env []string) (baoStatus, string, bool) {
+	output, _ := kubectlOutputWithEnv(
+		env,
+		"-n", kindNamespace,
+		"exec", kindOpenBaoPod, "--",
+		"sh", "-lc",
+		"BAO_ADDR=http://127.0.0.1:8200 bao status -format=json || true",
+	)
+	var status baoStatus
+	if err := json.Unmarshal([]byte(output), &status); err != nil {
+		return baoStatus{}, output, false
+	}
+	return status, output, true
+}
+
+func kindOpenBaoRestartCount(t *testing.T, env []string) int {
+	t.Helper()
+	output, err := kubectlOutputWithEnv(
+		env,
+		"-n", kindNamespace,
+		"get", "pod", kindOpenBaoPod,
+		"-o", "jsonpath={.status.containerStatuses[0].restartCount}",
+	)
+	if err != nil {
+		t.Fatalf("kubectl get OpenBao restart count returned error: %v\n%s", err, output)
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(output))
+	if err != nil {
+		t.Fatalf("parse OpenBao restart count returned error: %v\n%s", err, output)
+	}
+	return count
+}
+
+func waitForKindOpenBaoRestart(t *testing.T, env []string, previousCount int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastCount int
+	for time.Now().Before(deadline) {
+		lastCount = kindOpenBaoRestartCount(t, env)
+		if lastCount > previousCount {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("OpenBao container restart count = %d, want greater than %d", lastCount, previousCount)
+}
+
 func kindOutput(args ...string) (string, error) {
 	return commandOutput("kind", args...)
 }
@@ -414,6 +782,19 @@ func commandOutput(name string, args ...string) (string, error) {
 	//nolint:gosec // E2E harness intentionally invokes local CLI tools.
 	cmd := exec.Command(name, args...)
 	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+func kubectlOutputWithEnv(env []string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	//nolint:gosec // E2E harness intentionally invokes the local kubectl CLI.
+	cmd := exec.CommandContext(ctx, "kubectl", args...)
+	cmd.Env = env
+	output, err := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return string(output), ctx.Err()
+	}
 	return string(output), err
 }
 
