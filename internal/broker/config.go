@@ -19,6 +19,8 @@ const (
 	DefaultChallengeTTL = 2 * time.Minute
 	// DefaultKubernetesNodeEvidenceTTL is used when Kubernetes config omits node_evidence_ttl_seconds.
 	DefaultKubernetesNodeEvidenceTTL = 5 * time.Minute
+	// DefaultKubernetesAPITimeout is used when Kubernetes config omits api_timeout_seconds.
+	DefaultKubernetesAPITimeout = 10 * time.Second
 	// DevelopmentProfile is the only keyring profile implemented by the M2 skeleton.
 	DevelopmentProfile = "development"
 	// OTelExporterNone disables SDK exporter setup while preserving instrumentation hooks.
@@ -56,10 +58,14 @@ type Config struct {
 // KubernetesConfig contains the optional Kubernetes workload verifier configuration.
 type KubernetesConfig struct {
 	Enabled                          bool   `json:"enabled"`
+	APIServer                        string `json:"api_server"`
+	CACertFile                       string `json:"ca_cert_file"`
+	BearerTokenFile                  string `json:"bearer_token_file"`
 	TokenReviewAudience              string `json:"token_review_audience"`
 	Namespace                        string `json:"namespace"`
 	ServiceAccount                   string `json:"service_account"`
 	NodeEvidenceTTLSeconds           int64  `json:"node_evidence_ttl_seconds"`
+	APITimeoutSeconds                int64  `json:"api_timeout_seconds"`
 	AllowUnboundServiceAccountTokens bool   `json:"allow_unbound_service_account_tokens"`
 }
 
@@ -237,6 +243,9 @@ func (c Config) validateKubernetes() error {
 		if kubernetes.NodeEvidenceTTLSeconds < 0 {
 			return errors.New("kubernetes.node_evidence_ttl_seconds must not be negative")
 		}
+		if kubernetes.APITimeoutSeconds < 0 {
+			return errors.New("kubernetes.api_timeout_seconds must not be negative")
+		}
 		return nil
 	}
 	if strings.TrimSpace(kubernetes.TokenReviewAudience) == "" {
@@ -257,6 +266,9 @@ func (c Config) validateKubernetes() error {
 	if kubernetes.NodeEvidenceTTL() <= 0 {
 		return errors.New("kubernetes.node_evidence_ttl_seconds must be greater than zero")
 	}
+	if kubernetes.APITimeout() <= 0 {
+		return errors.New("kubernetes.api_timeout_seconds must be greater than zero")
+	}
 	return nil
 }
 
@@ -274,6 +286,14 @@ func (k KubernetesConfig) NodeEvidenceTTL() time.Duration {
 		return DefaultKubernetesNodeEvidenceTTL
 	}
 	return time.Duration(k.NodeEvidenceTTLSeconds) * time.Second
+}
+
+// APITimeout returns the configured Kubernetes API request timeout.
+func (k KubernetesConfig) APITimeout() time.Duration {
+	if k.APITimeoutSeconds == 0 {
+		return DefaultKubernetesAPITimeout
+	}
+	return time.Duration(k.APITimeoutSeconds) * time.Second
 }
 
 // RequirePodBoundToken returns whether Kubernetes evidence must include pod-bound token claims.

@@ -16,9 +16,12 @@ import (
 	"errors"
 	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +32,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+)
+
+const (
+	testKubernetesSubject = "openbao.openbao"
+	testNodeName          = "node-a"
 )
 
 func TestSQLiteMigrationIdempotency(t *testing.T) {
@@ -294,10 +302,10 @@ func TestEvidenceVerifierFailureDeniesWrap(t *testing.T) {
 
 func TestKubernetesEvidenceVerifierAuthorizesWorkload(t *testing.T) {
 	config := testConfig(t)
-	config.DevelopmentSubject = "openbao.openbao"
+	config.DevelopmentSubject = testKubernetesSubject
 	store := newTestStore(t, config)
 	cache := NewMemoryNodeEvidenceCache()
-	putTestNodeEvidence(t, cache, config, "node-a", "node-uid", time.Now(), time.Now().Add(time.Minute))
+	putTestNodeEvidence(t, cache, config, "node-uid", time.Now(), time.Now().Add(time.Minute))
 	telemetry, err := NewTelemetry(config)
 	if err != nil {
 		t.Fatalf("NewTelemetry returned error: %v", err)
@@ -308,7 +316,7 @@ func TestKubernetesEvidenceVerifierAuthorizesWorkload(t *testing.T) {
 		store,
 		NewFileAuditSink(config.AuditFilePath, false),
 		telemetry,
-		testKubernetesEvidenceVerifier(testKubernetesTokenReviewStatus("node-a", "node-uid")),
+		testKubernetesEvidenceVerifier(testKubernetesTokenReviewStatus(testNodeName, "node-uid")),
 		cache,
 	)
 	challenge := testChallenge(t, config)
@@ -337,6 +345,74 @@ func TestKubernetesEvidenceVerifierAuthorizesWorkload(t *testing.T) {
 	}
 }
 
+func TestRuntimeKubernetesVerifierUsesTokenReviewAndPodLookup(t *testing.T) {
+	api, calls := startKubernetesAPIServer(t, testNodeName)
+	defer api.Close()
+	config := testConfig(t)
+	config.DevelopmentSubject = testKubernetesSubject
+	config.Kubernetes = testRuntimeKubernetesConfig(t, api.URL)
+	runtime := newTestRuntime(t, config)
+	if runtime.NodeEvidence == nil {
+		t.Fatal("runtime NodeEvidence cache is nil")
+	}
+	putTestNodeEvidence(t, runtime.NodeEvidence, config, "node-uid", time.Now(), time.Now().Add(time.Minute))
+	client, cleanup := startPlaintextBroker(t, runtime)
+	defer cleanup()
+
+	challengeID := brokerChallenge(t, client, config, config.DevelopmentSubject, protocolv1.Operation_OPERATION_WRAP)
+	evidence, err := k8sprovider.NewEvidenceEnvelope(challengeID, "projected-token")
+	if err != nil {
+		t.Fatalf("NewEvidenceEnvelope returned error: %v", err)
+	}
+	resp, err := client.Wrap(context.Background(), &protocolv1.WrapRequest{
+		Plaintext: []byte("seal plaintext"),
+		Evidence:  evidence,
+	})
+	if err != nil {
+		t.Fatalf("Wrap returned error: %v", err)
+	}
+	if resp.GetDecision().GetState() != protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW {
+		t.Fatalf("wrap decision = %s, want allow", resp.GetDecision().GetState())
+	}
+	if calls.tokenReviews() != 1 || calls.pods() != 1 {
+		t.Fatalf("Kubernetes API calls = tokenreviews:%d pods:%d, want 1/1", calls.tokenReviews(), calls.pods())
+	}
+}
+
+func TestRuntimeKubernetesVerifierDeniesPodNodeMismatch(t *testing.T) {
+	api, calls := startKubernetesAPIServer(t, "node-b")
+	defer api.Close()
+	config := testConfig(t)
+	config.DevelopmentSubject = testKubernetesSubject
+	config.Kubernetes = testRuntimeKubernetesConfig(t, api.URL)
+	runtime := newTestRuntime(t, config)
+	client, cleanup := startPlaintextBroker(t, runtime)
+	defer cleanup()
+
+	challengeID := brokerChallenge(t, client, config, config.DevelopmentSubject, protocolv1.Operation_OPERATION_WRAP)
+	evidence, err := k8sprovider.NewEvidenceEnvelope(challengeID, "projected-token")
+	if err != nil {
+		t.Fatalf("NewEvidenceEnvelope returned error: %v", err)
+	}
+	resp, err := client.Wrap(context.Background(), &protocolv1.WrapRequest{
+		Plaintext: []byte("seal plaintext"),
+		Evidence:  evidence,
+	})
+	if err != nil {
+		t.Fatalf("Wrap returned error: %v", err)
+	}
+	assertDecisionError(
+		t,
+		resp.GetDecision(),
+		protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_DENY,
+		protocolv1.ErrorCode_ERROR_CODE_ATTESTATION_FAILED,
+		"attestation verification failed",
+	)
+	if calls.tokenReviews() != 1 || calls.pods() != 1 {
+		t.Fatalf("Kubernetes API calls = tokenreviews:%d pods:%d, want 1/1", calls.tokenReviews(), calls.pods())
+	}
+}
+
 func TestKubernetesWorkloadNodeEvidencePolicyDenials(t *testing.T) {
 	now := time.Now()
 	tests := []struct {
@@ -356,7 +432,6 @@ func TestKubernetesWorkloadNodeEvidencePolicyDenials(t *testing.T) {
 					t,
 					cache,
 					config,
-					"node-a",
 					"node-uid",
 					now.Add(-2*time.Minute),
 					now.Add(-time.Minute),
@@ -368,7 +443,7 @@ func TestKubernetesWorkloadNodeEvidencePolicyDenials(t *testing.T) {
 			name: "uid-mismatch",
 			configureCache: func(t *testing.T, cache *MemoryNodeEvidenceCache, config Config) {
 				t.Helper()
-				putTestNodeEvidence(t, cache, config, "node-a", "other-node-uid", now, now.Add(time.Minute))
+				putTestNodeEvidence(t, cache, config, "other-node-uid", now, now.Add(time.Minute))
 			},
 			wantReason: "node evidence does not match workload node",
 		},
@@ -377,7 +452,7 @@ func TestKubernetesWorkloadNodeEvidencePolicyDenials(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := testConfig(t)
-			config.DevelopmentSubject = "openbao.openbao"
+			config.DevelopmentSubject = testKubernetesSubject
 			store := newTestStore(t, config)
 			cache := NewMemoryNodeEvidenceCache()
 			if tt.configureCache != nil {
@@ -388,7 +463,7 @@ func TestKubernetesWorkloadNodeEvidencePolicyDenials(t *testing.T) {
 				store,
 				NewFileAuditSink(config.AuditFilePath, false),
 				newTestTelemetry(t),
-				testKubernetesEvidenceVerifier(testKubernetesTokenReviewStatus("node-a", "node-uid")),
+				testKubernetesEvidenceVerifier(testKubernetesTokenReviewStatus(testNodeName, "node-uid")),
 				cache,
 			)
 			challenge := testChallenge(t, config)
@@ -624,7 +699,7 @@ func testConfig(t *testing.T) Config {
 		ClusterID:                 "prod-eu1",
 		KeyID:                     "root",
 		PolicyID:                  "development",
-		DevelopmentSubject:        "node-a",
+		DevelopmentSubject:        testNodeName,
 		DevelopmentWrappingKeyB64: base64.StdEncoding.EncodeToString(testKeyMaterial()),
 		ChallengeTTLSeconds:       60,
 	}
@@ -726,6 +801,120 @@ func testEvidence(challengeID string, subject string) *protocolv1.EvidenceEnvelo
 			{Namespace: SubjectClaimNamespace, Name: SubjectClaimName, Value: subject},
 		},
 	}
+}
+
+func testRuntimeKubernetesConfig(t *testing.T, apiServer string) KubernetesConfig {
+	t.Helper()
+	return KubernetesConfig{
+		Enabled:                true,
+		APIServer:              apiServer,
+		BearerTokenFile:        writeKubernetesBearerToken(t),
+		TokenReviewAudience:    "bao-unseald",
+		Namespace:              "openbao",
+		ServiceAccount:         "openbao",
+		NodeEvidenceTTLSeconds: 30,
+		APITimeoutSeconds:      5,
+	}
+}
+
+func writeKubernetesBearerToken(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(path, []byte("reviewer-token\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	return path
+}
+
+type kubernetesAPICalls struct {
+	mu               sync.Mutex
+	tokenReviewCount int
+	podCount         int
+}
+
+func (c *kubernetesAPICalls) tokenReview() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.tokenReviewCount++
+}
+
+func (c *kubernetesAPICalls) pod() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.podCount++
+}
+
+func (c *kubernetesAPICalls) tokenReviews() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.tokenReviewCount
+}
+
+func (c *kubernetesAPICalls) pods() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.podCount
+}
+
+func startKubernetesAPIServer(t *testing.T, podNodeName string) (*httptest.Server, *kubernetesAPICalls) {
+	t.Helper()
+	calls := &kubernetesAPICalls{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer reviewer-token" {
+			t.Errorf("authorization = %q, want reviewer bearer token", got)
+		}
+		switch r.URL.Path {
+		case "/apis/authentication.k8s.io/v1/tokenreviews":
+			calls.tokenReview()
+			var reviewed struct {
+				Spec struct {
+					Token     string   `json:"token,omitempty"`
+					Audiences []string `json:"audiences,omitempty"`
+				} `json:"spec,omitempty"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&reviewed); err != nil {
+				t.Errorf("Decode TokenReview request returned error: %v", err)
+			}
+			if reviewed.Spec.Token != "projected-token" {
+				t.Errorf("reviewed token = %q, want projected-token", reviewed.Spec.Token)
+			}
+			if len(reviewed.Spec.Audiences) != 1 || reviewed.Spec.Audiences[0] != "bao-unseald" {
+				t.Errorf("reviewed audiences = %v, want [bao-unseald]", reviewed.Spec.Audiences)
+			}
+			_, _ = w.Write([]byte(`{
+  "status": {
+    "authenticated": true,
+    "user": {
+      "username": "system:serviceaccount:openbao:openbao",
+      "uid": "sa-uid",
+      "groups": ["system:serviceaccounts"],
+      "extra": {
+        "authentication.kubernetes.io/pod-name": ["openbao-0"],
+        "authentication.kubernetes.io/pod-uid": ["pod-uid"],
+        "authentication.kubernetes.io/node-name": ["node-a"],
+        "authentication.kubernetes.io/node-uid": ["node-uid"]
+      }
+    },
+    "audiences": ["bao-unseald"]
+  }
+}`))
+		case "/api/v1/namespaces/openbao/pods/openbao-0":
+			calls.pod()
+			_, _ = w.Write([]byte(`{
+  "metadata": {
+    "namespace": "openbao",
+    "name": "openbao-0",
+    "uid": "pod-uid"
+  },
+  "spec": {
+    "nodeName": "` + podNodeName + `"
+  }
+}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	return server, calls
 }
 
 func writePolicyDocument(t *testing.T, config Config, subject string) string {
@@ -968,7 +1157,6 @@ func putTestNodeEvidence(
 	t *testing.T,
 	cache *MemoryNodeEvidenceCache,
 	config Config,
-	nodeName string,
 	nodeUID string,
 	collectedAt time.Time,
 	expiresAt time.Time,
@@ -976,7 +1164,7 @@ func putTestNodeEvidence(
 	t.Helper()
 	err := cache.PutNodeEvidence(context.Background(), NodeEvidence{
 		ClusterID:    config.ClusterID,
-		NodeName:     nodeName,
+		NodeName:     testNodeName,
 		NodeUID:      nodeUID,
 		Provider:     "generic-tpm2-quote",
 		EvidenceHash: "test-node-evidence-hash",

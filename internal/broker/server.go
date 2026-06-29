@@ -17,11 +17,12 @@ import (
 
 // Runtime owns broker resources for one daemon process.
 type Runtime struct {
-	Config Config
-	Store  Store
-	Audit  *FileAuditSink
-	Server *grpc.Server
-	Tel    *Telemetry
+	Config       Config
+	Store        Store
+	Audit        *FileAuditSink
+	Server       *grpc.Server
+	Tel          *Telemetry
+	NodeEvidence *MemoryNodeEvidenceCache
 }
 
 // NewRuntime initializes state, policy inputs, audit, telemetry, and gRPC services.
@@ -55,13 +56,26 @@ func NewRuntime(ctx context.Context, config Config) (*Runtime, error) {
 		return nil, err
 	}
 	audit := NewFileAuditSink(config.AuditFilePath, config.AuditFsync)
-	server, err := NewGRPCServer(config, NewService(config, store, audit, telemetry))
+	serviceDeps, err := newRuntimeService(config, store, audit, telemetry)
 	if err != nil {
 		_ = telemetry.Shutdown(ctx)
 		_ = store.Close()
 		return nil, err
 	}
-	return &Runtime{Config: config, Store: store, Audit: audit, Server: server, Tel: telemetry}, nil
+	server, err := NewGRPCServer(config, serviceDeps.Service)
+	if err != nil {
+		_ = telemetry.Shutdown(ctx)
+		_ = store.Close()
+		return nil, err
+	}
+	return &Runtime{
+		Config:       config,
+		Store:        store,
+		Audit:        audit,
+		Server:       server,
+		Tel:          telemetry,
+		NodeEvidence: serviceDeps.NodeEvidence,
+	}, nil
 }
 
 // Close stops broker resources.

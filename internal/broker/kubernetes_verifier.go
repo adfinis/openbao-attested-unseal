@@ -17,9 +17,19 @@ func NewKubernetesEvidenceVerifier(
 	reviewer k8sprovider.TokenReviewer,
 	config KubernetesConfig,
 ) KubernetesEvidenceVerifier {
+	return NewKubernetesEvidenceVerifierWithPodLookup(reviewer, nil, config)
+}
+
+// NewKubernetesEvidenceVerifierWithPodLookup maps config and pod lookup into the provider verifier.
+func NewKubernetesEvidenceVerifierWithPodLookup(
+	reviewer k8sprovider.TokenReviewer,
+	podLookup k8sprovider.PodLookup,
+	config KubernetesConfig,
+) KubernetesEvidenceVerifier {
 	return KubernetesEvidenceVerifier{
 		Verifier: k8sprovider.Verifier{
-			Reviewer: reviewer,
+			Reviewer:  reviewer,
+			PodLookup: podLookup,
 			Config: k8sprovider.VerifierConfig{
 				Audience:          config.TokenReviewAudience,
 				Namespace:         config.Namespace,

@@ -19,10 +19,12 @@ func TestConfigValidateAcceptsEnabledKubernetes(t *testing.T) {
 	config := validBrokerConfig()
 	config.Kubernetes = KubernetesConfig{
 		Enabled:                true,
+		APIServer:              "https://kubernetes.default.svc",
 		TokenReviewAudience:    "bao-unseald",
 		Namespace:              "openbao",
 		ServiceAccount:         "openbao",
 		NodeEvidenceTTLSeconds: 30,
+		APITimeoutSeconds:      5,
 	}
 
 	if err := config.Validate(); err != nil {
@@ -33,6 +35,9 @@ func TestConfigValidateAcceptsEnabledKubernetes(t *testing.T) {
 	}
 	if !config.Kubernetes.RequirePodBoundToken() {
 		t.Fatal("RequirePodBoundToken = false, want true")
+	}
+	if got := config.Kubernetes.APITimeout().Seconds(); got != 5 {
+		t.Fatalf("APITimeout seconds = %.0f, want 5", got)
 	}
 }
 
@@ -63,6 +68,22 @@ func TestConfigValidateRejectsInvalidKubernetesTTL(t *testing.T) {
 	err := config.Validate()
 	if err == nil || !strings.Contains(err.Error(), "node_evidence_ttl_seconds") {
 		t.Fatalf("Validate error = %v, want node_evidence_ttl_seconds error", err)
+	}
+}
+
+func TestConfigValidateRejectsInvalidKubernetesAPITimeout(t *testing.T) {
+	config := validBrokerConfig()
+	config.Kubernetes = KubernetesConfig{
+		Enabled:             true,
+		TokenReviewAudience: "bao-unseald",
+		Namespace:           "openbao",
+		ServiceAccount:      "openbao",
+		APITimeoutSeconds:   -1,
+	}
+
+	err := config.Validate()
+	if err == nil || !strings.Contains(err.Error(), "api_timeout_seconds") {
+		t.Fatalf("Validate error = %v, want api_timeout_seconds error", err)
 	}
 }
 

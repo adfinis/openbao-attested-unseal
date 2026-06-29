@@ -44,8 +44,9 @@ type Claims struct {
 
 // Verifier validates Kubernetes workload evidence through TokenReview.
 type Verifier struct {
-	Reviewer TokenReviewer
-	Config   VerifierConfig
+	Reviewer  TokenReviewer
+	PodLookup PodLookup
+	Config    VerifierConfig
 }
 
 // Verify validates a Kubernetes evidence envelope and returns normalized claims.
@@ -65,6 +66,10 @@ func (v Verifier) Verify(
 		return nil, Claims{}, err
 	}
 	claims, err := v.claimsFromStatus(status)
+	if err != nil {
+		return nil, Claims{}, err
+	}
+	claims, err = v.verifyPodBinding(ctx, claims)
 	if err != nil {
 		return nil, Claims{}, err
 	}
@@ -117,9 +122,39 @@ func (v Verifier) claimsFromStatus(status TokenReviewStatus) (Claims, error) {
 		NodeName:       firstExtra(status.User.Extra, extraNodeName),
 		NodeUID:        firstExtra(status.User.Extra, extraNodeUID),
 	}
-	if v.Config.RequirePodBinding && (claims.PodUID == "" || claims.NodeName == "") {
+	if v.Config.RequirePodBinding && (claims.PodName == "" || claims.PodUID == "") {
 		return Claims{}, fmt.Errorf("%w: pod-bound token claims are required", ErrInvalidEvidence)
 	}
+	if v.Config.RequirePodBinding && v.PodLookup == nil && claims.NodeName == "" {
+		return Claims{}, fmt.Errorf("%w: pod-bound token node claim is required", ErrInvalidEvidence)
+	}
+	return claims, nil
+}
+
+func (v Verifier) verifyPodBinding(ctx context.Context, claims Claims) (Claims, error) {
+	if v.PodLookup == nil {
+		return claims, nil
+	}
+	if claims.PodName == "" || claims.PodUID == "" {
+		return Claims{}, fmt.Errorf("%w: pod name and UID claims are required", ErrInvalidEvidence)
+	}
+	pod, err := v.PodLookup.LookupPod(ctx, claims.Namespace, claims.PodName)
+	if err != nil {
+		return Claims{}, fmt.Errorf("%w: pod lookup failed: %w", ErrInvalidEvidence, err)
+	}
+	if pod.UID == "" {
+		return Claims{}, fmt.Errorf("%w: pod lookup returned no UID", ErrInvalidEvidence)
+	}
+	if pod.UID != claims.PodUID {
+		return Claims{}, fmt.Errorf("%w: pod UID does not match token", ErrInvalidEvidence)
+	}
+	if pod.NodeName == "" {
+		return Claims{}, fmt.Errorf("%w: pod is not scheduled to a node", ErrInvalidEvidence)
+	}
+	if claims.NodeName != "" && claims.NodeName != pod.NodeName {
+		return Claims{}, fmt.Errorf("%w: pod node does not match token", ErrInvalidEvidence)
+	}
+	claims.NodeName = pod.NodeName
 	return claims, nil
 }
 
