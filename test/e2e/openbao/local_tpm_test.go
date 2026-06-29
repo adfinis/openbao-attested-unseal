@@ -3,6 +3,7 @@
 package openbao
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -26,6 +27,7 @@ const (
 
 type initOutput struct {
 	RecoveryShares []string `json:"recovery_shares"`
+	RootToken      string   `json:"root_token"`
 }
 
 type baoStatus struct {
@@ -34,6 +36,20 @@ type baoStatus struct {
 	Sealed      bool   `json:"sealed"`
 	Version     string `json:"version"`
 	StorageType string `json:"storage_type"`
+}
+
+type kmsTraceEvent struct {
+	Operation       string `json:"operation"`
+	Mode            string `json:"mode"`
+	KeyID           string `json:"key_id"`
+	PlaintextBytes  int    `json:"plaintext_bytes"`
+	CiphertextBytes int    `json:"ciphertext_bytes"`
+	AADBytes        int    `json:"aad_bytes"`
+}
+
+type ctlRotateOutput struct {
+	OperationID string `json:"operation_id"`
+	HTTPStatus  int    `json:"http_status"`
 }
 
 func TestLocalTPMAutoUnsealWithOpenBaoBeta(t *testing.T) {
@@ -71,13 +87,14 @@ func TestLocalTPMAutoUnsealWithOpenBaoBeta(t *testing.T) {
 	tpmVolume := runID + "-tpm"
 	stateVolume := runID + "-state"
 	baoVolume := runID + "-bao"
+	traceVolume := runID + "-trace"
 	swtpmName := runID + "-swtpm"
 	baoName := runID + "-bao"
 	keep := os.Getenv("OPENBAO_E2E_KEEP") == "1"
 	if !keep {
 		t.Cleanup(func() {
 			dockerIgnore(t, "rm", "-f", baoName, swtpmName)
-			dockerIgnore(t, "volume", "rm", tpmVolume, stateVolume, baoVolume)
+			dockerIgnore(t, "volume", "rm", tpmVolume, stateVolume, baoVolume, traceVolume)
 		})
 		t.Cleanup(func() { _ = os.RemoveAll(workDir) })
 	} else {
@@ -87,14 +104,16 @@ func TestLocalTPMAutoUnsealWithOpenBaoBeta(t *testing.T) {
 	docker(t, false, "volume", "create", tpmVolume)
 	docker(t, false, "volume", "create", stateVolume)
 	docker(t, false, "volume", "create", baoVolume)
+	docker(t, false, "volume", "create", traceVolume)
 	startSWTPM(t, alpineImage, swtpmName, tpmVolume)
 	waitForSWTPMSocket(t, alpineImage, tpmVolume)
 
 	recoveryPath := filepath.Join(workDir, "recovery.json")
 	sharesPath := filepath.Join(workDir, "shares.json")
+	brokerPath := filepath.Join(workDir, "broker.db")
 	initJSON := run(t, true, hostCtl,
 		"init",
-		"-state", filepath.Join(workDir, "broker.db"),
+		"-state", brokerPath,
 		"-recovery-package", recoveryPath,
 		"-cluster-id", "prod-eu1",
 		"-key-id", "root",
@@ -127,17 +146,18 @@ func TestLocalTPMAutoUnsealWithOpenBaoBeta(t *testing.T) {
 		"run", "--rm",
 		"-v", stateVolume+":/state",
 		"-v", baoVolume+":/bao",
+		"-v", traceVolume+":/trace",
 		alpineImage,
-		"sh", "-lc", "chown -R 100:1000 /state /bao && chmod -R go-rwx /state || true",
+		"sh", "-lc", "chown -R 100:1000 /state /bao /trace && chmod -R go-rwx /state /trace || true",
 	)
 
 	writeOpenBaoConfig(t, filepath.Join(configDir, "openbao.hcl"), sha256Hex(t, pluginPath))
 
-	startOpenBao(t, openbaoImage, baoName, tpmVolume, stateVolume, baoVolume, pluginDir, configDir)
+	startOpenBao(t, openbaoImage, baoName, tpmVolume, stateVolume, baoVolume, traceVolume, pluginDir, configDir)
 	before := waitForStatus(t, baoName, false, true, 30*time.Second)
 	assertStatus(t, before, false, true)
 
-	docker(t, true,
+	openBaoInitJSON := docker(t, true,
 		"exec",
 		"-e", "BAO_ADDR="+baoAddr,
 		baoName,
@@ -146,13 +166,53 @@ func TestLocalTPMAutoUnsealWithOpenBaoBeta(t *testing.T) {
 		"-recovery-threshold=1",
 		"-format=json",
 	)
+	openBaoInit := parseOpenBaoInit(t, openBaoInitJSON)
 	afterInit := waitForStatus(t, baoName, true, false, 30*time.Second)
 	assertStatus(t, afterInit, true, false)
 
+	beforeRotateEvents := waitForTraceOperationCount(t, alpineImage, traceVolume, "encrypt", 1, 10*time.Second)
+	beforeRotateEncryptCount := countTraceOperation(beforeRotateEvents, "encrypt")
+	operation := startActivatedRotation(t, hostCtl, brokerPath)
+	openBAORootJSON := docker(t, true,
+		"run", "--rm",
+		"--network", "container:"+baoName,
+		"-e", "BAO_ADDR="+baoAddr,
+		"-e", "BAO_TOKEN="+openBaoInit.RootToken,
+		"-v", linuxCtl+":/usr/local/bin/bao-unsealctl:ro",
+		"-v", brokerPath+":/broker.db",
+		alpineImage,
+		"/usr/local/bin/bao-unsealctl",
+		"rotate", "openbao-root",
+		"-state", "/broker.db",
+		"-operation-id", operation.OperationID,
+		"-addr", baoAddr,
+		"-format", "json",
+	)
+	assertOpenBAORootRotation(t, openBAORootJSON)
+	afterRotateEvents := waitForTraceOperationCount(
+		t,
+		alpineImage,
+		traceVolume,
+		"encrypt",
+		beforeRotateEncryptCount+1,
+		10*time.Second,
+	)
+	assertLastTraceKeyID(t, afterRotateEvents, "encrypt", "prod-eu1/root/v1")
+	decryptCountBeforeRestart := countTraceOperation(afterRotateEvents, "decrypt")
+
 	docker(t, false, "rm", "-f", baoName)
-	startOpenBao(t, openbaoImage, baoName, tpmVolume, stateVolume, baoVolume, pluginDir, configDir)
+	startOpenBao(t, openbaoImage, baoName, tpmVolume, stateVolume, baoVolume, traceVolume, pluginDir, configDir)
 	afterRestart := waitForStatus(t, baoName, true, false, 90*time.Second)
 	assertStatus(t, afterRestart, true, false)
+	afterRestartEvents := waitForTraceOperationCount(
+		t,
+		alpineImage,
+		traceVolume,
+		"decrypt",
+		decryptCountBeforeRestart+1,
+		10*time.Second,
+	)
+	assertLastTraceKeyID(t, afterRestartEvents, "decrypt", "prod-eu1/root/v1")
 }
 
 func requireDocker(t *testing.T) {
@@ -246,6 +306,9 @@ func chmod(t *testing.T, path string, mode os.FileMode) {
 func buildBinary(t *testing.T, repoRoot string, output string, goos string, goarch string, pkg string) {
 	t.Helper()
 	args := []string{"build", "-trimpath", "-buildvcs=false", "-o", output, pkg}
+	if pkg == "./cmd/bao-kms-unseal" {
+		args = []string{"build", "-trimpath", "-buildvcs=false", "-tags=e2e", "-o", output, pkg}
+	}
 	env := append([]string{}, os.Environ()...)
 	env = append(env, "CGO_ENABLED=0")
 	if goos != "" {
@@ -310,6 +373,62 @@ func writeThresholdShares(t *testing.T, initJSON string, sharesPath string) {
 	}
 }
 
+func parseOpenBaoInit(t *testing.T, initJSON string) initOutput {
+	t.Helper()
+	var init initOutput
+	if err := json.Unmarshal([]byte(initJSON), &init); err != nil {
+		t.Fatalf("parse OpenBao init JSON returned error: %v", err)
+	}
+	if strings.TrimSpace(init.RootToken) == "" {
+		t.Fatal("OpenBao init did not return a root token")
+	}
+	return init
+}
+
+func startActivatedRotation(t *testing.T, hostCtl string, brokerPath string) ctlRotateOutput {
+	t.Helper()
+	startJSON := run(t, false, hostCtl,
+		"rotate", "start",
+		"-state", brokerPath,
+		"-cluster-id", "prod-eu1",
+		"-key-id", "root",
+		"-policy-id", "rotation",
+		"-format", "json",
+	)
+	var started ctlRotateOutput
+	if err := json.Unmarshal([]byte(startJSON), &started); err != nil {
+		t.Fatalf("parse rotation start JSON returned error: %v", err)
+	}
+	if strings.TrimSpace(started.OperationID) == "" {
+		t.Fatal("rotation start did not return an operation ID")
+	}
+	activateJSON := run(t, false, hostCtl,
+		"rotate", "activate",
+		"-state", brokerPath,
+		"-operation-id", started.OperationID,
+		"-format", "json",
+	)
+	var activated ctlRotateOutput
+	if err := json.Unmarshal([]byte(activateJSON), &activated); err != nil {
+		t.Fatalf("parse rotation activate JSON returned error: %v", err)
+	}
+	if activated.OperationID != started.OperationID {
+		t.Fatalf("activated operation = %q, want %q", activated.OperationID, started.OperationID)
+	}
+	return activated
+}
+
+func assertOpenBAORootRotation(t *testing.T, rotationJSON string) {
+	t.Helper()
+	var output ctlRotateOutput
+	if err := json.Unmarshal([]byte(rotationJSON), &output); err != nil {
+		t.Fatalf("parse openbao-root JSON returned error: %v", err)
+	}
+	if output.HTTPStatus < 200 || output.HTTPStatus >= 300 {
+		t.Fatalf("openbao-root HTTP status = %d, want 2xx", output.HTTPStatus)
+	}
+}
+
 func writeOpenBaoConfig(t *testing.T, path string, pluginSHA string) {
 	t.Helper()
 	config := fmt.Sprintf(`plugin_directory = "/plugins"
@@ -362,6 +481,7 @@ func startOpenBao(
 	tpmVolume string,
 	stateVolume string,
 	baoVolume string,
+	traceVolume string,
 	pluginDir string,
 	configDir string,
 ) {
@@ -371,9 +491,11 @@ func startOpenBao(
 		"--name", name,
 		"--cap-add", "IPC_LOCK",
 		"-e", "BAO_ADDR="+baoAddr,
+		"-e", "OPENBAO_ATTESTED_UNSEAL_TRACE_FILE=/trace/kms.jsonl",
 		"-v", tpmVolume+":/tpm",
 		"-v", stateVolume+":/state",
 		"-v", baoVolume+":/bao",
+		"-v", traceVolume+":/trace",
 		"-v", pluginDir+":/plugins:ro",
 		"-v", configDir+":/config:ro",
 		image,
@@ -457,6 +579,85 @@ func assertStatus(t *testing.T, status baoStatus, initialized bool, sealed bool)
 			sealed,
 		)
 	}
+}
+
+func waitForTraceOperationCount(
+	t *testing.T,
+	alpineImage string,
+	traceVolume string,
+	operation string,
+	want int,
+	timeout time.Duration,
+) []kmsTraceEvent {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var events []kmsTraceEvent
+	for time.Now().Before(deadline) {
+		events = readTraceEvents(t, alpineImage, traceVolume)
+		if countTraceOperation(events, operation) >= want {
+			return events
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf(
+		"KMS trace operation %q count = %d, want at least %d; events=%+v",
+		operation,
+		countTraceOperation(events, operation),
+		want,
+		events,
+	)
+	return nil
+}
+
+func readTraceEvents(t *testing.T, alpineImage string, traceVolume string) []kmsTraceEvent {
+	t.Helper()
+	output := docker(t, false,
+		"run", "--rm",
+		"-v", traceVolume+":/trace:ro",
+		alpineImage,
+		"sh", "-lc", "test ! -f /trace/kms.jsonl || cat /trace/kms.jsonl",
+	)
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	events := make([]kmsTraceEvent, 0)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var event kmsTraceEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("parse KMS trace event returned error: %v\n%s", err, line)
+		}
+		events = append(events, event)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan KMS trace returned error: %v", err)
+	}
+	return events
+}
+
+func countTraceOperation(events []kmsTraceEvent, operation string) int {
+	count := 0
+	for _, event := range events {
+		if event.Operation == operation {
+			count++
+		}
+	}
+	return count
+}
+
+func assertLastTraceKeyID(t *testing.T, events []kmsTraceEvent, operation string, keyID string) {
+	t.Helper()
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Operation != operation {
+			continue
+		}
+		if events[i].KeyID != keyID {
+			t.Fatalf("last %s trace key ID = %q, want %q", operation, events[i].KeyID, keyID)
+		}
+		return
+	}
+	t.Fatalf("KMS trace did not contain operation %q", operation)
 }
 
 func failIfContainerStopped(t *testing.T, container string) {

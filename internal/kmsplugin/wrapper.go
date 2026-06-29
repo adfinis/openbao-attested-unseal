@@ -119,6 +119,14 @@ func (w *Wrapper) Encrypt(
 	if err != nil {
 		return nil, err
 	}
+	traceWrapperEvent(wrapperTraceEvent{
+		Operation:       "encrypt",
+		Mode:            string(w.configuredMode()),
+		KeyID:           blobTraceKeyID(resp.Blob),
+		PlaintextBytes:  len(plaintext),
+		CiphertextBytes: len(resp.Blob.GetCiphertext()),
+		AADBytes:        len(opts.GetWithAad()),
+	})
 	return resp.Blob, nil
 }
 
@@ -144,6 +152,14 @@ func (w *Wrapper) Decrypt(
 	if err != nil {
 		return nil, err
 	}
+	traceWrapperEvent(wrapperTraceEvent{
+		Operation:       "decrypt",
+		Mode:            string(w.configuredMode()),
+		KeyID:           blobTraceKeyID(ciphertext),
+		PlaintextBytes:  len(resp.Plaintext),
+		CiphertextBytes: len(ciphertext.GetCiphertext()),
+		AADBytes:        len(opts.GetWithAad()),
+	})
 	return resp.Plaintext, nil
 }
 
@@ -176,6 +192,12 @@ func (w *Wrapper) currentBackend() (Backend, error) {
 		return nil, ErrNotInitialized
 	}
 	return w.backend, nil
+}
+
+func (w *Wrapper) configuredMode() Mode {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.config.Mode
 }
 
 func (w *Wrapper) newBackendLocked(ctx context.Context, config Config) (Backend, error) {
