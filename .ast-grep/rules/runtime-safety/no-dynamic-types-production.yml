@@ -9,6 +9,7 @@ files:
   - internal/**/*.go
 ignores:
   - '**/*_test.go'
+  - internal/protocol/**/*.pb.go
 rule:
   any:
     - pattern: 'map[string]any'

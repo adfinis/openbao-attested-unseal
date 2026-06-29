@@ -90,12 +90,16 @@ func Create(
 	}
 	encoded := make([]string, 0, len(points))
 	for _, point := range points {
-		encoded = append(encoded, encodeShare(shareEnvelope{
+		encodedShare, err := encodeShare(shareEnvelope{
 			SchemaVersion: SchemaVersion,
 			PackageID:     packageID,
 			Index:         int(point.index),
 			Value:         base64.StdEncoding.EncodeToString(point.value),
-		}))
+		})
+		if err != nil {
+			return Package{}, err
+		}
+		encoded = append(encoded, encodedShare)
 	}
 	return Package{Metadata: metadata, Shares: encoded}, nil
 }
@@ -220,12 +224,12 @@ func validateCreateInputs(
 	return nil
 }
 
-func encodeShare(share shareEnvelope) string {
+func encodeShare(share shareEnvelope) (string, error) {
 	encoded, err := json.Marshal(share)
 	if err != nil {
-		panic(err)
+		return "", fmt.Errorf("%w: encode share: %w", ErrInvalidPackage, err)
 	}
-	return SharePrefix + base64.RawURLEncoding.EncodeToString(encoded)
+	return SharePrefix + base64.RawURLEncoding.EncodeToString(encoded), nil
 }
 
 func parseShare(encoded string) (shareEnvelope, error) {
@@ -276,10 +280,15 @@ func combineShares(points []sharePoint) ([]byte, error) {
 		return nil, ErrThreshold
 	}
 	secretLen := len(points[0].value)
+	seen := make(map[byte]struct{}, len(points))
 	for _, point := range points {
 		if point.index == 0 {
 			return nil, fmt.Errorf("%w: zero index", ErrInvalidShare)
 		}
+		if _, ok := seen[point.index]; ok {
+			return nil, fmt.Errorf("%w: duplicate share", ErrInvalidShare)
+		}
+		seen[point.index] = struct{}{}
 		if len(point.value) != secretLen {
 			return nil, fmt.Errorf("%w: share length mismatch", ErrInvalidShare)
 		}
@@ -293,7 +302,11 @@ func combineShares(points []sharePoint) ([]byte, error) {
 				if i == j {
 					continue
 				}
-				basis = gfMul(basis, gfDiv(other.index, point.index^other.index))
+				divisor, err := gfDiv(other.index, point.index^other.index)
+				if err != nil {
+					return nil, err
+				}
+				basis = gfMul(basis, divisor)
 			}
 			value ^= gfMul(point.value[offset], basis)
 		}
@@ -338,9 +351,9 @@ func gfPow(a byte, power int) byte {
 	return result
 }
 
-func gfDiv(a byte, b byte) byte {
+func gfDiv(a byte, b byte) (byte, error) {
 	if b == 0 {
-		panic("divide by zero in GF(256)")
+		return 0, fmt.Errorf("%w: duplicate share", ErrInvalidShare)
 	}
-	return gfMul(a, gfPow(b, 254))
+	return gfMul(a, gfPow(b, 254)), nil
 }

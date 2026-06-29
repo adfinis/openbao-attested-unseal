@@ -93,7 +93,7 @@ func newBrokerRuntimeForPlugin(t *testing.T) *brokerpkg.Runtime {
 	if err != nil {
 		t.Fatalf("NewRuntime returned error: %v", err)
 	}
-	t.Cleanup(func() { _ = runtime.Close() })
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
 	return runtime
 }
 

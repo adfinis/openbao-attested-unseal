@@ -65,7 +65,7 @@ func NewRuntime(ctx context.Context, config Config) (*Runtime, error) {
 }
 
 // Close stops broker resources.
-func (r *Runtime) Close() error {
+func (r *Runtime) Close(ctx context.Context) error {
 	if r.Server != nil {
 		r.Server.Stop()
 	}
@@ -74,9 +74,9 @@ func (r *Runtime) Close() error {
 		err = errors.Join(err, r.Store.Close())
 	}
 	if r.Tel != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		err = errors.Join(err, r.Tel.Shutdown(ctx))
+		err = errors.Join(err, r.Tel.Shutdown(shutdownCtx))
 	}
 	return err
 }
@@ -87,7 +87,7 @@ func ListenAndServe(ctx context.Context, config Config) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = runtime.Close() }()
+	defer func() { _ = runtime.Close(ctx) }()
 
 	listener, err := net.Listen("tcp", config.ListenAddress)
 	if err != nil {

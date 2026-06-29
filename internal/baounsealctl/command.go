@@ -127,12 +127,12 @@ func initCommand(args []string, stdout io.Writer, stderr io.Writer) error {
 	if err != nil {
 		return cli.WithExitCode(cli.ExitRuntime, err)
 	}
-	store, err := broker.OpenSQLiteStore(context.Background(), *statePath)
+	store, err := broker.OpenSQLiteStore(cli.ProcessContext(), *statePath)
 	if err != nil {
 		return cli.WithExitCode(cli.ExitConfig, err)
 	}
 	defer func() { _ = store.Close() }()
-	if err := store.BootstrapKeyring(context.Background(), broker.BootstrapKeyringRequest{
+	if err := store.BootstrapKeyring(cli.ProcessContext(), broker.BootstrapKeyringRequest{
 		ClusterID:            *clusterID,
 		KeyID:                *keyID,
 		Profile:              strings.TrimSpace(*keyringProfile),
@@ -150,7 +150,7 @@ func initCommand(args []string, stdout io.Writer, stderr io.Writer) error {
 	if err := writeJSONFile(*recoveryPath, recoveryPackage.Metadata); err != nil {
 		return cli.WithExitCode(cli.ExitConfig, err)
 	}
-	auditID, err := audit(context.Background(), store, *auditPath, auditInput{
+	auditID, err := audit(cli.ProcessContext(), store, *auditPath, auditInput{
 		Subject:   "operator",
 		Operation: "OPERATION_INIT",
 		ClusterID: *clusterID,
@@ -199,16 +199,16 @@ func statusCommand(args []string, stdout io.Writer, stderr io.Writer) error {
 	if strings.TrimSpace(*statePath) == "" {
 		return cli.WithExitCode(cli.ExitUsage, errors.New("-state is required"))
 	}
-	store, err := broker.OpenSQLiteStore(context.Background(), *statePath)
+	store, err := broker.OpenSQLiteStore(cli.ProcessContext(), *statePath)
 	if err != nil {
 		return cli.WithExitCode(cli.ExitConfig, err)
 	}
 	defer func() { _ = store.Close() }()
-	ring, err := store.LoadKeyring(context.Background(), *clusterID)
+	ring, err := store.LoadKeyring(cli.ProcessContext(), *clusterID)
 	if err != nil {
 		return cli.WithExitCode(cli.ExitCheckFailed, err)
 	}
-	active, err := ring.Active(context.Background())
+	active, err := ring.Active(cli.ProcessContext())
 	if err != nil {
 		return cli.WithExitCode(cli.ExitCheckFailed, err)
 	}
@@ -410,16 +410,16 @@ func issueEnrollmentGrant(options enrollIssueOptions) (enrollment.Grant, string,
 	if err != nil {
 		return enrollment.Grant{}, "", cli.WithExitCode(cli.ExitRuntime, err)
 	}
-	store, err := broker.OpenSQLiteStore(context.Background(), options.statePath)
+	store, err := broker.OpenSQLiteStore(cli.ProcessContext(), options.statePath)
 	if err != nil {
 		return enrollment.Grant{}, "", cli.WithExitCode(cli.ExitConfig, err)
 	}
 	defer func() { _ = store.Close() }()
-	if err := store.InsertSubject(context.Background(), request.ClusterID, request.SubjectID, now); err != nil {
+	if err := store.InsertSubject(cli.ProcessContext(), request.ClusterID, request.SubjectID, now); err != nil {
 		return enrollment.Grant{}, "", cli.WithExitCode(cli.ExitRuntime, err)
 	}
 	requestExpiry, _ := time.Parse(time.RFC3339Nano, request.ExpiresAt)
-	if err := store.InsertEnrollmentRequest(context.Background(), broker.EnrollmentRequestRecord{
+	if err := store.InsertEnrollmentRequest(cli.ProcessContext(), broker.EnrollmentRequestRecord{
 		RequestID: request.RequestID,
 		ClusterID: request.ClusterID,
 		Subject:   request.SubjectID,
@@ -430,7 +430,7 @@ func issueEnrollmentGrant(options enrollIssueOptions) (enrollment.Grant, string,
 		return enrollment.Grant{}, "", cli.WithExitCode(cli.ExitRuntime, err)
 	}
 	grantExpiry, _ := time.Parse(time.RFC3339Nano, grant.ExpiresAt)
-	if err := store.InsertEnrollmentGrant(context.Background(), broker.EnrollmentGrantRecord{
+	if err := store.InsertEnrollmentGrant(cli.ProcessContext(), broker.EnrollmentGrantRecord{
 		GrantID:   grant.GrantID,
 		RequestID: grant.RequestID,
 		ClusterID: grant.ClusterID,
@@ -444,7 +444,7 @@ func issueEnrollmentGrant(options enrollIssueOptions) (enrollment.Grant, string,
 	if err := writeJSONFile(options.grantPath, grant); err != nil {
 		return enrollment.Grant{}, "", cli.WithExitCode(cli.ExitConfig, err)
 	}
-	auditID, err := audit(context.Background(), store, options.auditPath, auditInput{
+	auditID, err := audit(cli.ProcessContext(), store, options.auditPath, auditInput{
 		Subject:   request.SubjectID,
 		Operation: protocolv1.Operation_OPERATION_ENROLL.String(),
 		ClusterID: request.ClusterID,
@@ -530,24 +530,24 @@ func applyEnrollmentGrant(options enrollApplyOptions) (enrollApplyOutput, error)
 			fmt.Errorf("grant cluster %q does not match expected cluster %q", grant.ClusterID, options.expectedClusterID),
 		)
 	}
-	store, err := broker.OpenSQLiteStore(context.Background(), options.statePath)
+	store, err := broker.OpenSQLiteStore(cli.ProcessContext(), options.statePath)
 	if err != nil {
 		return enrollApplyOutput{}, cli.WithExitCode(cli.ExitConfig, err)
 	}
 	defer func() { _ = store.Close() }()
-	if err := checkBrokerReady(context.Background(), store, grant.ClusterID); err != nil {
+	if err := checkBrokerReady(cli.ProcessContext(), store, grant.ClusterID); err != nil {
 		return enrollApplyOutput{}, cli.WithExitCode(cli.ExitCheckFailed, err)
 	}
-	if err := store.ConsumeEnrollmentGrant(context.Background(), grant.GrantID, now); err != nil {
+	if err := store.ConsumeEnrollmentGrant(cli.ProcessContext(), grant.GrantID, now); err != nil {
 		return enrollApplyOutput{}, cli.WithExitCode(cli.ExitCheckFailed, err)
 	}
-	if err := store.InsertSubject(context.Background(), grant.ClusterID, grant.SubjectID, now); err != nil {
+	if err := store.InsertSubject(cli.ProcessContext(), grant.ClusterID, grant.SubjectID, now); err != nil {
 		return enrollApplyOutput{}, cli.WithExitCode(cli.ExitRuntime, err)
 	}
 	if err := writeLocalTrustState(options.localStatePath, grant, now); err != nil {
 		return enrollApplyOutput{}, cli.WithExitCode(cli.ExitConfig, err)
 	}
-	auditID, err := audit(context.Background(), store, options.auditPath, auditInput{
+	auditID, err := audit(cli.ProcessContext(), store, options.auditPath, auditInput{
 		Subject:   grant.SubjectID,
 		Operation: protocolv1.Operation_OPERATION_ENROLL.String(),
 		ClusterID: grant.ClusterID,
@@ -688,12 +688,12 @@ func startRotation(options rotateStartOptions) (rotateOutput, error) {
 	if err != nil {
 		return rotateOutput{}, cli.WithExitCode(cli.ExitRuntime, err)
 	}
-	store, err := broker.OpenSQLiteStore(context.Background(), options.statePath)
+	store, err := broker.OpenSQLiteStore(cli.ProcessContext(), options.statePath)
 	if err != nil {
 		return rotateOutput{}, cli.WithExitCode(cli.ExitConfig, err)
 	}
 	defer func() { _ = store.Close() }()
-	operation, err := store.StartRotation(context.Background(), broker.RotationStartRequest{
+	operation, err := store.StartRotation(cli.ProcessContext(), broker.RotationStartRequest{
 		OperationID: operationID,
 		ClusterID:   options.clusterID,
 		KeyID:       options.keyID,
@@ -727,17 +727,17 @@ func rotateActivateCommand(args []string, stdout io.Writer, stderr io.Writer) er
 	if strings.TrimSpace(*statePath) == "" || strings.TrimSpace(*operationID) == "" {
 		return cli.WithExitCode(cli.ExitUsage, errors.New("-state and -operation-id are required"))
 	}
-	store, err := broker.OpenSQLiteStore(context.Background(), *statePath)
+	store, err := broker.OpenSQLiteStore(cli.ProcessContext(), *statePath)
 	if err != nil {
 		return cli.WithExitCode(cli.ExitConfig, err)
 	}
 	defer func() { _ = store.Close() }()
-	operation, err := store.ActivateRotation(context.Background(), strings.TrimSpace(*operationID), time.Now().UTC())
+	operation, err := store.ActivateRotation(cli.ProcessContext(), strings.TrimSpace(*operationID), time.Now().UTC())
 	if err != nil {
 		return cli.WithExitCode(cli.ExitCheckFailed, err)
 	}
 	policyID := "rotation"
-	keyVersion, err := store.KeyVersion(context.Background(), keyring.KeyRef{
+	keyVersion, err := store.KeyVersion(cli.ProcessContext(), keyring.KeyRef{
 		ClusterID: operation.ClusterID,
 		KeyID:     operation.KeyID,
 		Version:   operation.ToVersion,
@@ -773,16 +773,16 @@ func rotateStatusCommand(args []string, stdout io.Writer, stderr io.Writer) erro
 	if strings.TrimSpace(*statePath) == "" || strings.TrimSpace(*operationID) == "" {
 		return cli.WithExitCode(cli.ExitUsage, errors.New("-state and -operation-id are required"))
 	}
-	store, err := broker.OpenSQLiteStore(context.Background(), *statePath)
+	store, err := broker.OpenSQLiteStore(cli.ProcessContext(), *statePath)
 	if err != nil {
 		return cli.WithExitCode(cli.ExitConfig, err)
 	}
 	defer func() { _ = store.Close() }()
-	operation, err := store.RotationOperation(context.Background(), strings.TrimSpace(*operationID))
+	operation, err := store.RotationOperation(cli.ProcessContext(), strings.TrimSpace(*operationID))
 	if err != nil {
 		return cli.WithExitCode(cli.ExitCheckFailed, err)
 	}
-	verifications, err := store.RotationVerifications(context.Background(), operation.OperationID)
+	verifications, err := store.RotationVerifications(cli.ProcessContext(), operation.OperationID)
 	if err != nil {
 		return cli.WithExitCode(cli.ExitCheckFailed, err)
 	}
@@ -859,12 +859,12 @@ func rotateOpenBAORoot(options rotateOpenBAORootOptions) (rotateOpenBAORootOutpu
 	if token == "" {
 		return rotateOpenBAORootOutput{}, cli.WithExitCode(cli.ExitConfig, errors.New("BAO_TOKEN is required"))
 	}
-	store, err := broker.OpenSQLiteStore(context.Background(), options.statePath)
+	store, err := broker.OpenSQLiteStore(cli.ProcessContext(), options.statePath)
 	if err != nil {
 		return rotateOpenBAORootOutput{}, cli.WithExitCode(cli.ExitConfig, err)
 	}
 	defer func() { _ = store.Close() }()
-	operation, err := store.RotationOperation(context.Background(), options.operationID)
+	operation, err := store.RotationOperation(cli.ProcessContext(), options.operationID)
 	if err != nil {
 		return rotateOpenBAORootOutput{}, cli.WithExitCode(cli.ExitCheckFailed, err)
 	}
@@ -878,7 +878,7 @@ func rotateOpenBAORoot(options rotateOpenBAORootOptions) (rotateOpenBAORootOutpu
 			),
 		)
 	}
-	keyVersion, err := store.KeyVersion(context.Background(), keyring.KeyRef{
+	keyVersion, err := store.KeyVersion(cli.ProcessContext(), keyring.KeyRef{
 		ClusterID: operation.ClusterID,
 		KeyID:     operation.KeyID,
 		Version:   operation.ToVersion,
@@ -901,7 +901,7 @@ func rotateOpenBAORoot(options rotateOpenBAORootOptions) (rotateOpenBAORootOutpu
 	); err != nil {
 		return rotateOpenBAORootOutput{}, cli.WithExitCode(cli.ExitRuntime, err)
 	}
-	statusCode, callErr := callOpenBaoRotateRoot(context.Background(), options, endpoint, token)
+	statusCode, callErr := callOpenBaoRotateRoot(cli.ProcessContext(), options, endpoint, token)
 	decision := "POLICY_DECISION_STATE_ALLOW"
 	reason := "openbao root key rotation completed"
 	if callErr != nil {
@@ -916,7 +916,7 @@ func rotateOpenBAORoot(options rotateOpenBAORootOptions) (rotateOpenBAORootOutpu
 		return rotateOpenBAORootOutput{}, cli.WithExitCode(cli.ExitRuntime, callErr)
 	}
 	verification, err := store.RecordRotationVerification(
-		context.Background(),
+		cli.ProcessContext(),
 		operation.OperationID,
 		broker.RotationVerificationOpenBAORoot,
 		fmt.Sprintf("OpenBao /sys/rotate/root returned HTTP %d", statusCode),
@@ -1028,12 +1028,12 @@ func rotateVerifyRestartCommand(args []string, stdout io.Writer, stderr io.Write
 }
 
 func rotateVerifyRestart(options rotateVerifyRestartOptions) (rotateVerifyRestartOutput, error) {
-	store, err := broker.OpenSQLiteStore(context.Background(), options.statePath)
+	store, err := broker.OpenSQLiteStore(cli.ProcessContext(), options.statePath)
 	if err != nil {
 		return rotateVerifyRestartOutput{}, cli.WithExitCode(cli.ExitConfig, err)
 	}
 	defer func() { _ = store.Close() }()
-	operation, err := store.RotationOperation(context.Background(), options.operationID)
+	operation, err := store.RotationOperation(cli.ProcessContext(), options.operationID)
 	if err != nil {
 		return rotateVerifyRestartOutput{}, cli.WithExitCode(cli.ExitCheckFailed, err)
 	}
@@ -1047,7 +1047,7 @@ func rotateVerifyRestart(options rotateVerifyRestartOptions) (rotateVerifyRestar
 			),
 		)
 	}
-	verifications, err := store.RotationVerifications(context.Background(), operation.OperationID)
+	verifications, err := store.RotationVerifications(cli.ProcessContext(), operation.OperationID)
 	if err != nil {
 		return rotateVerifyRestartOutput{}, cli.WithExitCode(cli.ExitCheckFailed, err)
 	}
@@ -1061,7 +1061,7 @@ func rotateVerifyRestart(options rotateVerifyRestartOptions) (rotateVerifyRestar
 	if err != nil {
 		return rotateVerifyRestartOutput{}, cli.WithExitCode(cli.ExitConfig, err)
 	}
-	status, err := callOpenBaoSealStatus(context.Background(), options, endpoint)
+	status, err := callOpenBaoSealStatus(cli.ProcessContext(), options, endpoint)
 	if err != nil {
 		_, _ = auditRotationWithDecision(
 			store,
@@ -1098,7 +1098,7 @@ func rotateVerifyRestart(options rotateVerifyRestartOptions) (rotateVerifyRestar
 		status.Type,
 	)
 	verification, err := store.RecordRotationVerification(
-		context.Background(),
+		cli.ProcessContext(),
 		operation.OperationID,
 		broker.RotationVerificationRestart,
 		detail,
@@ -1242,7 +1242,7 @@ func auditRotation(
 	policyID string,
 	reason string,
 ) (string, error) {
-	return audit(context.Background(), store, auditPath, auditInput{
+	return audit(cli.ProcessContext(), store, auditPath, auditInput{
 		Subject:   "operator",
 		Operation: protocolv1.Operation_OPERATION_ROTATE.String(),
 		ClusterID: operation.ClusterID,
@@ -1262,7 +1262,7 @@ func auditRotationWithDecision(
 	decision string,
 	reason string,
 ) (string, error) {
-	return audit(context.Background(), store, auditPath, auditInput{
+	return audit(cli.ProcessContext(), store, auditPath, auditInput{
 		Subject:   "operator",
 		Operation: protocolv1.Operation_OPERATION_ROTATE.String(),
 		ClusterID: operation.ClusterID,
@@ -1423,15 +1423,15 @@ func revokeSubjectCommand(args []string, stdout io.Writer, stderr io.Writer) err
 }
 
 func revokeSubject(options revokeSubjectOptions) (revokeSubjectOutput, error) {
-	store, err := broker.OpenSQLiteStore(context.Background(), options.statePath)
+	store, err := broker.OpenSQLiteStore(cli.ProcessContext(), options.statePath)
 	if err != nil {
 		return revokeSubjectOutput{}, cli.WithExitCode(cli.ExitConfig, err)
 	}
 	defer func() { _ = store.Close() }()
-	if err := store.RevokeSubject(context.Background(), options.clusterID, options.subjectID); err != nil {
+	if err := store.RevokeSubject(cli.ProcessContext(), options.clusterID, options.subjectID); err != nil {
 		return revokeSubjectOutput{}, cli.WithExitCode(cli.ExitCheckFailed, err)
 	}
-	auditID, err := audit(context.Background(), store, options.auditPath, auditInput{
+	auditID, err := audit(cli.ProcessContext(), store, options.auditPath, auditInput{
 		Subject:   options.subjectID,
 		Operation: operationRevoke,
 		ClusterID: options.clusterID,
@@ -1471,13 +1471,13 @@ func revokeStatusCommand(args []string, stdout io.Writer, stderr io.Writer) erro
 	}
 	cluster := strings.TrimSpace(*clusterID)
 	subject := strings.TrimSpace(*subjectID)
-	store, err := broker.OpenSQLiteStore(context.Background(), *statePath)
+	store, err := broker.OpenSQLiteStore(cli.ProcessContext(), *statePath)
 	if err != nil {
 		return cli.WithExitCode(cli.ExitConfig, err)
 	}
 	defer func() { _ = store.Close() }()
 	revoked := false
-	if _, err := store.Subject(context.Background(), cluster, subject); err != nil {
+	if _, err := store.Subject(cli.ProcessContext(), cluster, subject); err != nil {
 		if !errors.Is(err, broker.ErrSubjectRevoked) {
 			return cli.WithExitCode(cli.ExitCheckFailed, err)
 		}
@@ -1629,7 +1629,7 @@ func provisionLocalTPM(options tpmProvisionOptions) (tpmProvisionOutput, error) 
 		Version:   options.keyVersion,
 	}
 	localMetadata, err := tpmlocal.StoreLocalKey(
-		context.Background(),
+		cli.ProcessContext(),
 		options.statePath,
 		tpmlocal.Device{Path: options.tpmDevice},
 		keyring.KeyVersion{
@@ -1766,7 +1766,7 @@ func recoverBeginCommand(args []string, stdout io.Writer, stderr io.Writer) erro
 		return cli.WithExitCode(cli.ExitConfig, err)
 	}
 	if _, err := recovery.Recover(metadata, shares); err != nil {
-		if _, auditErr := auditWithStatePath(context.Background(), *statePath, *auditPath, auditInput{
+		if _, auditErr := auditWithStatePath(cli.ProcessContext(), *statePath, *auditPath, auditInput{
 			Subject:   "operator",
 			Operation: protocolv1.Operation_OPERATION_RECOVER.String(),
 			ClusterID: metadata.ClusterID,
@@ -1783,7 +1783,7 @@ func recoverBeginCommand(args []string, stdout io.Writer, stderr io.Writer) erro
 	if err != nil {
 		return cli.WithExitCode(cli.ExitRuntime, err)
 	}
-	auditID, err := auditWithStatePath(context.Background(), *statePath, *auditPath, auditInput{
+	auditID, err := auditWithStatePath(cli.ProcessContext(), *statePath, *auditPath, auditInput{
 		Subject:   "operator",
 		Operation: protocolv1.Operation_OPERATION_RECOVER.String(),
 		ClusterID: metadata.ClusterID,
@@ -1892,7 +1892,7 @@ func recoverEnroll(options recoverEnrollOptions) (recoverEnrollOutput, error) {
 	if err := readJSONFile(options.sessionPath, &session); err != nil {
 		return recoverEnrollOutput{}, cli.WithExitCode(cli.ExitConfig, err)
 	}
-	store, err := broker.OpenSQLiteStore(context.Background(), options.statePath)
+	store, err := broker.OpenSQLiteStore(cli.ProcessContext(), options.statePath)
 	if err != nil {
 		return recoverEnrollOutput{}, cli.WithExitCode(cli.ExitConfig, err)
 	}
@@ -2012,7 +2012,7 @@ func bootstrapRecoveredKeyring(
 	if err != nil {
 		return cli.WithExitCode(cli.ExitRuntime, err)
 	}
-	if err := store.BootstrapKeyring(context.Background(), broker.BootstrapKeyringRequest{
+	if err := store.BootstrapKeyring(cli.ProcessContext(), broker.BootstrapKeyringRequest{
 		ClusterID:            metadata.ClusterID,
 		KeyID:                metadata.KeyID,
 		Profile:              options.keyringProfile,
@@ -2028,7 +2028,7 @@ func bootstrapRecoveredKeyring(
 		return cli.WithExitCode(cli.ExitRuntime, err)
 	}
 	if err := store.InsertSubject(
-		context.Background(),
+		cli.ProcessContext(),
 		targetRequest.ClusterID,
 		targetRequest.SubjectID,
 		now,
@@ -2044,7 +2044,7 @@ func auditRecoveredKeyring(
 	metadata recovery.PackageMetadata,
 	targetRequest enrollment.Request,
 ) (string, error) {
-	auditID, err := audit(context.Background(), store, options.auditPath, auditInput{
+	auditID, err := audit(cli.ProcessContext(), store, options.auditPath, auditInput{
 		Subject:   targetRequest.SubjectID,
 		Operation: protocolv1.Operation_OPERATION_RECOVER.String(),
 		ClusterID: metadata.ClusterID,
@@ -2070,7 +2070,7 @@ func auditRecoveryDeny(
 	if strings.TrimSpace(subjectID) == "" {
 		subjectID = "operator"
 	}
-	_, err := audit(context.Background(), store, options.auditPath, auditInput{
+	_, err := audit(cli.ProcessContext(), store, options.auditPath, auditInput{
 		Subject:   subjectID,
 		Operation: protocolv1.Operation_OPERATION_RECOVER.String(),
 		ClusterID: metadata.ClusterID,
@@ -2108,7 +2108,7 @@ func recoverFinishCommand(args []string, stdout io.Writer, stderr io.Writer) err
 	if err := os.Remove(*sessionPath); err != nil {
 		return cli.WithExitCode(cli.ExitRuntime, fmt.Errorf("remove recovery session: %w", err))
 	}
-	auditID, err := auditWithStatePath(context.Background(), *statePath, *auditPath, auditInput{
+	auditID, err := auditWithStatePath(cli.ProcessContext(), *statePath, *auditPath, auditInput{
 		Subject:   "operator",
 		Operation: protocolv1.Operation_OPERATION_RECOVER.String(),
 		ClusterID: session.ClusterID,
@@ -2491,7 +2491,8 @@ func parseKeyVersion(value uint) (uint32, error) {
 	return uint32(value), nil
 }
 
-func writeOutput(stdout io.Writer, format string, value interface{}, writeText func()) error {
+//nolint:forbidigo // JSON output is a reviewed CLI serialization boundary for typed command DTOs.
+func writeOutput[T any](stdout io.Writer, format string, value T, writeText func()) error {
 	if format == formatJSON {
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
@@ -2501,7 +2502,8 @@ func writeOutput(stdout io.Writer, format string, value interface{}, writeText f
 	return nil
 }
 
-func writeJSONFile(path string, value interface{}) error {
+//nolint:forbidigo // JSON files are a reviewed CLI serialization boundary for typed command DTOs.
+func writeJSONFile[T any](path string, value T) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("path is required")
 	}
@@ -2525,7 +2527,8 @@ func writeJSONFile(path string, value interface{}) error {
 	return nil
 }
 
-func readJSONFile(path string, value interface{}) error {
+//nolint:forbidigo // JSON files are a reviewed CLI deserialization boundary for typed command DTOs.
+func readJSONFile[T any](path string, value *T) error {
 	if err := rejectUnsafePermissions(path); err != nil {
 		return err
 	}
@@ -2583,7 +2586,8 @@ func rejectUnsafePermissions(path string) error {
 	return nil
 }
 
-func marshalStrict(value interface{}) ([]byte, error) {
+//nolint:forbidigo // JSON marshaling is a reviewed CLI serialization boundary for typed command DTOs.
+func marshalStrict[T any](value T) ([]byte, error) {
 	body, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshal JSON: %w", err)

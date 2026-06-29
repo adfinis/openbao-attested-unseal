@@ -59,7 +59,7 @@ func serve(args []string, stderr io.Writer) error {
 	if err != nil {
 		return cli.WithExitCode(cli.ExitConfig, err)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(cli.ProcessContext(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := broker.ListenAndServe(ctx, config); err != nil && !errors.Is(err, context.Canceled) {
 		return cli.WithExitCode(cli.ExitRuntime, err)

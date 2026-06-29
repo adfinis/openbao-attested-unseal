@@ -77,7 +77,7 @@ func TestBrokerWrapUnwrapRoundTripAndRestartReload(t *testing.T) {
 		t.Fatal("audit file does not contain an allow decision")
 	}
 
-	if err := runtime.Close(); err != nil {
+	if err := runtime.Close(context.Background()); err != nil {
 		t.Fatalf("runtime close returned error: %v", err)
 	}
 	reopened, err := OpenSQLiteStore(context.Background(), config.SQLitePath)
@@ -465,7 +465,7 @@ func TestTLSHarnessTrustedAndUntrustedClients(t *testing.T) {
 	config.RequireClientCert = true
 	runtime := newTestRuntime(t, config)
 	listener := startRuntimeOnListener(t, runtime)
-	defer func() { _ = runtime.Close() }()
+	defer func() { _ = runtime.Close(context.Background()) }()
 
 	trusted := dialTLS(t, listener.Addr().String(), pki.caCert, "localhost", pki.clientCert, pki.clientKey)
 	defer func() { _ = trusted.Close() }()
@@ -501,7 +501,7 @@ func TestTLSExpiredClientDenied(t *testing.T) {
 	config.RequireClientCert = true
 	runtime := newTestRuntime(t, config)
 	listener := startRuntimeOnListener(t, runtime)
-	defer func() { _ = runtime.Close() }()
+	defer func() { _ = runtime.Close(context.Background()) }()
 
 	conn := dialTLS(t, listener.Addr().String(), pki.caCert, "localhost", expiredCertPath, expiredKeyPath)
 	defer func() { _ = conn.Close() }()
@@ -518,7 +518,7 @@ func TestTLSServerNameMismatchDenied(t *testing.T) {
 	config.TLSKeyFile = pki.serverKey
 	runtime := newTestRuntime(t, config)
 	listener := startRuntimeOnListener(t, runtime)
-	defer func() { _ = runtime.Close() }()
+	defer func() { _ = runtime.Close(context.Background()) }()
 
 	conn := dialTLS(t, listener.Addr().String(), pki.caCert, "wrong.local", "", "")
 	defer func() { _ = conn.Close() }()
@@ -657,7 +657,7 @@ func newTestRuntime(t *testing.T, config Config) *Runtime {
 	if err != nil {
 		t.Fatalf("NewRuntime returned error: %v", err)
 	}
-	t.Cleanup(func() { _ = runtime.Close() })
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
 	return runtime
 }
 
@@ -679,7 +679,7 @@ func startPlaintextBroker(t *testing.T, runtime *Runtime) (protocolv1.UnsealServ
 	}
 	return protocolv1.NewUnsealServiceClient(conn), func() {
 		_ = conn.Close()
-		_ = runtime.Close()
+		_ = runtime.Close(context.Background())
 	}
 }
 

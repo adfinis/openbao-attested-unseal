@@ -1033,7 +1033,8 @@ func (s *SQLiteStore) AuditEvents(ctx context.Context) ([]AuditEvent, error) {
 }
 
 type rowQuerier interface {
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	//nolint:forbidigo // Mirrors database/sql's variadic argument boundary for transaction helpers.
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 func ensureNoStartedRotation(ctx context.Context, tx *sql.Tx, clusterID string, keyID string) error {

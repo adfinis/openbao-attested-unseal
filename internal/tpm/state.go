@@ -429,7 +429,8 @@ func readLocalKeyMetadata(path string) (LocalKeyMetadata, error) {
 	return out, nil
 }
 
-func readLocalJSON(path string, out interface{}) error {
+//nolint:forbidigo // Local TPM state decoding is limited to typed metadata DTOs.
+func readLocalJSON[T any](path string, out *T) error {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return fmt.Errorf("inspect %s: %w", path, err)
@@ -462,7 +463,8 @@ func writePCRPolicy(path string, value PCRPolicy, perm os.FileMode) error {
 	return writeLocalJSON(path, value, perm)
 }
 
-func writeLocalJSON(path string, value interface{}, perm os.FileMode) error {
+//nolint:forbidigo // Local TPM state encoding is limited to typed metadata DTOs.
+func writeLocalJSON[T any](path string, value T, perm os.FileMode) error {
 	payload, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", path, err)
