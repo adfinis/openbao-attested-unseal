@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +15,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -35,6 +39,10 @@ const (
 
 	approvalModeSingleOperator = "single-operator"
 	approvalModeQuorum         = "quorum"
+	commandStatus              = "status"
+	operationRevoke            = "OPERATION_REVOKE"
+	revocationModeBroker       = "broker"
+	revocationModeLocalTPM     = "local-tpm"
 )
 
 // Execute runs bao-unsealctl.
@@ -55,12 +63,16 @@ func Execute(info version.Info, args []string, stdout io.Writer, stderr io.Write
 		return nil
 	case "init":
 		return initCommand(args[1:], stdout, stderr)
-	case "status":
+	case commandStatus:
 		return statusCommand(args[1:], stdout, stderr)
 	case "enroll":
 		return enrollCommand(args[1:], stdout, stderr)
 	case "recover":
 		return recoverCommand(args[1:], stdout, stderr)
+	case "rotate":
+		return rotateCommand(args[1:], stdout, stderr)
+	case "revoke":
+		return revokeCommand(args[1:], stdout, stderr)
 	case "tpm":
 		return tpmCommand(args[1:], stdout, stderr)
 	default:
@@ -600,6 +612,597 @@ func recoverCommand(args []string, stdout io.Writer, stderr io.Writer) error {
 	}
 }
 
+func rotateCommand(args []string, stdout io.Writer, stderr io.Writer) error {
+	if len(args) == 0 {
+		return cli.WithExitCode(cli.ExitUsage, errors.New("expected rotate subcommand"))
+	}
+	switch args[0] {
+	case "start":
+		return rotateStartCommand(args[1:], stdout, stderr)
+	case "activate":
+		return rotateActivateCommand(args[1:], stdout, stderr)
+	case "openbao-root":
+		return rotateOpenBAORootCommand(args[1:], stdout, stderr)
+	case commandStatus:
+		return rotateStatusCommand(args[1:], stdout, stderr)
+	default:
+		return cli.WithExitCode(cli.ExitUsage, fmt.Errorf("unknown rotate subcommand %q", args[0]))
+	}
+}
+
+type rotateStartOptions struct {
+	statePath string
+	auditPath string
+	clusterID string
+	keyID     string
+	policyID  string
+	format    string
+}
+
+func rotateStartCommand(args []string, stdout io.Writer, stderr io.Writer) error {
+	flags := flag.NewFlagSet("rotate start", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	statePath := flags.String("state", "", "Path to broker SQLite state.")
+	auditPath := flags.String("audit-file", "", "Optional JSONL audit file path.")
+	clusterID := flags.String("cluster-id", "prod-eu1", "Cluster identifier.")
+	keyID := flags.String("key-id", "root", "Wrapping key identifier.")
+	policyID := flags.String("policy-id", "rotation", "Policy identifier for the new key version.")
+	format := flags.String("format", formatText, "Output format: text or json.")
+	if err := flags.Parse(args); err != nil {
+		return cli.WithExitCode(cli.ExitUsage, err)
+	}
+	if err := validateFormat(*format); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*statePath) == "" {
+		return cli.WithExitCode(cli.ExitUsage, errors.New("-state is required"))
+	}
+	options := rotateStartOptions{
+		statePath: *statePath,
+		auditPath: *auditPath,
+		clusterID: strings.TrimSpace(*clusterID),
+		keyID:     strings.TrimSpace(*keyID),
+		policyID:  strings.TrimSpace(*policyID),
+		format:    *format,
+	}
+	out, err := startRotation(options)
+	if err != nil {
+		return err
+	}
+	return writeOutput(stdout, options.format, out, func() {
+		_, _ = fmt.Fprintf(stdout, "Rotation operation: %s\n", out.OperationID)
+		_, _ = fmt.Fprintf(stdout, "Key: %s/%s v%d -> v%d\n", out.ClusterID, out.KeyID, out.FromVersion, out.ToVersion)
+		_, _ = fmt.Fprintf(stdout, "Status: %s\n", out.Status)
+		_, _ = fmt.Fprintf(stdout, "Audit ID: %s\n", out.AuditID)
+	})
+}
+
+func startRotation(options rotateStartOptions) (rotateOutput, error) {
+	material, err := keyring.GenerateKey()
+	if err != nil {
+		return rotateOutput{}, cli.WithExitCode(cli.ExitRuntime, err)
+	}
+	operationID, err := randomID("rot")
+	if err != nil {
+		return rotateOutput{}, cli.WithExitCode(cli.ExitRuntime, err)
+	}
+	store, err := broker.OpenSQLiteStore(context.Background(), options.statePath)
+	if err != nil {
+		return rotateOutput{}, cli.WithExitCode(cli.ExitConfig, err)
+	}
+	defer func() { _ = store.Close() }()
+	operation, err := store.StartRotation(context.Background(), broker.RotationStartRequest{
+		OperationID: operationID,
+		ClusterID:   options.clusterID,
+		KeyID:       options.keyID,
+		PolicyID:    options.policyID,
+		Material:    material,
+		CreatedAt:   time.Now().UTC(),
+	})
+	if err != nil {
+		return rotateOutput{}, cli.WithExitCode(cli.ExitCheckFailed, err)
+	}
+	auditID, err := auditRotation(store, options.auditPath, operation, options.policyID, "rotation started")
+	if err != nil {
+		return rotateOutput{}, cli.WithExitCode(cli.ExitRuntime, err)
+	}
+	return rotateOutputFromOperation(operation, auditID), nil
+}
+
+func rotateActivateCommand(args []string, stdout io.Writer, stderr io.Writer) error {
+	flags := flag.NewFlagSet("rotate activate", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	statePath := flags.String("state", "", "Path to broker SQLite state.")
+	auditPath := flags.String("audit-file", "", "Optional JSONL audit file path.")
+	operationID := flags.String("operation-id", "", "Rotation operation identifier.")
+	format := flags.String("format", formatText, "Output format: text or json.")
+	if err := flags.Parse(args); err != nil {
+		return cli.WithExitCode(cli.ExitUsage, err)
+	}
+	if err := validateFormat(*format); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*statePath) == "" || strings.TrimSpace(*operationID) == "" {
+		return cli.WithExitCode(cli.ExitUsage, errors.New("-state and -operation-id are required"))
+	}
+	store, err := broker.OpenSQLiteStore(context.Background(), *statePath)
+	if err != nil {
+		return cli.WithExitCode(cli.ExitConfig, err)
+	}
+	defer func() { _ = store.Close() }()
+	operation, err := store.ActivateRotation(context.Background(), strings.TrimSpace(*operationID), time.Now().UTC())
+	if err != nil {
+		return cli.WithExitCode(cli.ExitCheckFailed, err)
+	}
+	policyID := "rotation"
+	keyVersion, err := store.KeyVersion(context.Background(), keyring.KeyRef{
+		ClusterID: operation.ClusterID,
+		KeyID:     operation.KeyID,
+		Version:   operation.ToVersion,
+	})
+	if err == nil {
+		policyID = keyVersion.PolicyID
+	}
+	auditID, err := auditRotation(store, *auditPath, operation, policyID, "rotation activated")
+	if err != nil {
+		return cli.WithExitCode(cli.ExitRuntime, err)
+	}
+	out := rotateOutputFromOperation(operation, auditID)
+	return writeOutput(stdout, *format, out, func() {
+		_, _ = fmt.Fprintf(stdout, "Rotation operation: %s\n", out.OperationID)
+		_, _ = fmt.Fprintf(stdout, "Status: %s\n", out.Status)
+		_, _ = fmt.Fprintf(stdout, "Active key version: %d\n", out.ToVersion)
+		_, _ = fmt.Fprintf(stdout, "Audit ID: %s\n", out.AuditID)
+	})
+}
+
+func rotateStatusCommand(args []string, stdout io.Writer, stderr io.Writer) error {
+	flags := flag.NewFlagSet("rotate status", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	statePath := flags.String("state", "", "Path to broker SQLite state.")
+	operationID := flags.String("operation-id", "", "Rotation operation identifier.")
+	format := flags.String("format", formatText, "Output format: text or json.")
+	if err := flags.Parse(args); err != nil {
+		return cli.WithExitCode(cli.ExitUsage, err)
+	}
+	if err := validateFormat(*format); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*statePath) == "" || strings.TrimSpace(*operationID) == "" {
+		return cli.WithExitCode(cli.ExitUsage, errors.New("-state and -operation-id are required"))
+	}
+	store, err := broker.OpenSQLiteStore(context.Background(), *statePath)
+	if err != nil {
+		return cli.WithExitCode(cli.ExitConfig, err)
+	}
+	defer func() { _ = store.Close() }()
+	operation, err := store.RotationOperation(context.Background(), strings.TrimSpace(*operationID))
+	if err != nil {
+		return cli.WithExitCode(cli.ExitCheckFailed, err)
+	}
+	out := rotateOutputFromOperation(operation, "")
+	return writeOutput(stdout, *format, out, func() {
+		_, _ = fmt.Fprintf(stdout, "Rotation operation: %s\n", out.OperationID)
+		_, _ = fmt.Fprintf(stdout, "Key: %s/%s v%d -> v%d\n", out.ClusterID, out.KeyID, out.FromVersion, out.ToVersion)
+		_, _ = fmt.Fprintf(stdout, "Status: %s\n", out.Status)
+	})
+}
+
+type rotateOpenBAORootOptions struct {
+	statePath     string
+	auditPath     string
+	operationID   string
+	address       string
+	caCertPath    string
+	tlsServerName string
+	timeout       time.Duration
+	format        string
+}
+
+func rotateOpenBAORootCommand(args []string, stdout io.Writer, stderr io.Writer) error {
+	flags := flag.NewFlagSet("rotate openbao-root", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	statePath := flags.String("state", "", "Path to broker SQLite state.")
+	auditPath := flags.String("audit-file", "", "Optional JSONL audit file path.")
+	operationID := flags.String("operation-id", "", "Rotation operation identifier.")
+	address := flags.String("addr", envOrDefault("BAO_ADDR", "https://127.0.0.1:8200"), "OpenBao API address.")
+	caCertPath := flags.String("ca-cert", "", "Optional PEM CA certificate for OpenBao TLS.")
+	tlsServerName := flags.String("tls-server-name", "", "Optional TLS server name override.")
+	timeout := flags.Duration("timeout", 30*time.Second, "OpenBao request timeout.")
+	format := flags.String("format", formatText, "Output format: text or json.")
+	if err := flags.Parse(args); err != nil {
+		return cli.WithExitCode(cli.ExitUsage, err)
+	}
+	if err := validateFormat(*format); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*statePath) == "" || strings.TrimSpace(*operationID) == "" {
+		return cli.WithExitCode(cli.ExitUsage, errors.New("-state and -operation-id are required"))
+	}
+	if *timeout <= 0 {
+		return cli.WithExitCode(cli.ExitUsage, errors.New("-timeout must be greater than zero"))
+	}
+	options := rotateOpenBAORootOptions{
+		statePath:     *statePath,
+		auditPath:     *auditPath,
+		operationID:   strings.TrimSpace(*operationID),
+		address:       strings.TrimSpace(*address),
+		caCertPath:    strings.TrimSpace(*caCertPath),
+		tlsServerName: strings.TrimSpace(*tlsServerName),
+		timeout:       *timeout,
+		format:        *format,
+	}
+	out, err := rotateOpenBAORoot(options)
+	if err != nil {
+		return err
+	}
+	return writeOutput(stdout, options.format, out, func() {
+		_, _ = fmt.Fprintf(stdout, "Rotation operation: %s\n", out.OperationID)
+		_, _ = fmt.Fprintf(stdout, "Key: %s/%s v%d -> v%d\n", out.ClusterID, out.KeyID, out.FromVersion, out.ToVersion)
+		_, _ = fmt.Fprintf(stdout, "Status: %s\n", out.Status)
+		_, _ = fmt.Fprintf(stdout, "OpenBao endpoint: %s\n", out.Endpoint)
+		_, _ = fmt.Fprintf(stdout, "HTTP status: %d\n", out.HTTPStatus)
+		_, _ = fmt.Fprintf(stdout, "Audit ID: %s\n", out.AuditID)
+	})
+}
+
+func rotateOpenBAORoot(options rotateOpenBAORootOptions) (rotateOpenBAORootOutput, error) {
+	token := strings.TrimSpace(os.Getenv("BAO_TOKEN"))
+	if token == "" {
+		return rotateOpenBAORootOutput{}, cli.WithExitCode(cli.ExitConfig, errors.New("BAO_TOKEN is required"))
+	}
+	store, err := broker.OpenSQLiteStore(context.Background(), options.statePath)
+	if err != nil {
+		return rotateOpenBAORootOutput{}, cli.WithExitCode(cli.ExitConfig, err)
+	}
+	defer func() { _ = store.Close() }()
+	operation, err := store.RotationOperation(context.Background(), options.operationID)
+	if err != nil {
+		return rotateOpenBAORootOutput{}, cli.WithExitCode(cli.ExitCheckFailed, err)
+	}
+	if operation.Status != broker.RotationStatusActivated {
+		return rotateOpenBAORootOutput{}, cli.WithExitCode(
+			cli.ExitCheckFailed,
+			fmt.Errorf(
+				"%w: rotation must be activated before OpenBao root rotation; status is %q",
+				broker.ErrRotationInvalidTransition,
+				operation.Status,
+			),
+		)
+	}
+	keyVersion, err := store.KeyVersion(context.Background(), keyring.KeyRef{
+		ClusterID: operation.ClusterID,
+		KeyID:     operation.KeyID,
+		Version:   operation.ToVersion,
+	})
+	policyID := "rotation"
+	if err == nil {
+		policyID = keyVersion.PolicyID
+	}
+	endpoint, err := openBaoEndpoint(options.address, "/v1/sys/rotate/root")
+	if err != nil {
+		return rotateOpenBAORootOutput{}, cli.WithExitCode(cli.ExitConfig, err)
+	}
+	if _, err := auditRotationWithDecision(
+		store,
+		options.auditPath,
+		operation,
+		policyID,
+		"POLICY_DECISION_STATE_ALLOW",
+		"openbao root key rotation requested",
+	); err != nil {
+		return rotateOpenBAORootOutput{}, cli.WithExitCode(cli.ExitRuntime, err)
+	}
+	statusCode, callErr := callOpenBaoRotateRoot(context.Background(), options, endpoint, token)
+	decision := "POLICY_DECISION_STATE_ALLOW"
+	reason := "openbao root key rotation completed"
+	if callErr != nil {
+		decision = "POLICY_DECISION_STATE_DENY"
+		reason = "openbao root key rotation failed"
+	}
+	auditID, auditErr := auditRotationWithDecision(store, options.auditPath, operation, policyID, decision, reason)
+	if auditErr != nil {
+		return rotateOpenBAORootOutput{}, cli.WithExitCode(cli.ExitRuntime, auditErr)
+	}
+	if callErr != nil {
+		return rotateOpenBAORootOutput{}, cli.WithExitCode(cli.ExitRuntime, callErr)
+	}
+	return rotateOpenBAORootOutput{
+		AuditID:     auditID,
+		OperationID: operation.OperationID,
+		ClusterID:   operation.ClusterID,
+		KeyID:       operation.KeyID,
+		FromVersion: operation.FromVersion,
+		ToVersion:   operation.ToVersion,
+		Status:      string(operation.Status),
+		Endpoint:    endpoint,
+		HTTPStatus:  statusCode,
+	}, nil
+}
+
+func callOpenBaoRotateRoot(
+	ctx context.Context,
+	options rotateOpenBAORootOptions,
+	endpoint string,
+	token string,
+) (int, error) {
+	client, err := newOpenBaoClient(options)
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
+	if err != nil {
+		return 0, fmt.Errorf("create OpenBao request: %w", err)
+	}
+	req.Header.Set("X-Vault-Request", "true")
+	req.Header.Set("X-Vault-Token", token)
+	req.Header.Set("User-Agent", "bao-unsealctl")
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("call OpenBao root rotation endpoint: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		_ = resp.Body.Close()
+	}()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return resp.StatusCode, fmt.Errorf("OpenBao root rotation failed with HTTP status %d", resp.StatusCode)
+	}
+	return resp.StatusCode, nil
+}
+
+func newOpenBaoClient(options rotateOpenBAORootOptions) (*http.Client, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if options.caCertPath != "" || options.tlsServerName != "" {
+		tlsConfig := &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			ServerName: options.tlsServerName,
+		}
+		if options.caCertPath != "" {
+			pool, err := x509.SystemCertPool()
+			if err != nil {
+				pool = x509.NewCertPool()
+			}
+			// #nosec G304 -- CA certificate path is operator supplied.
+			caPEM, err := os.ReadFile(options.caCertPath)
+			if err != nil {
+				return nil, fmt.Errorf("read CA certificate: %w", err)
+			}
+			if !pool.AppendCertsFromPEM(caPEM) {
+				return nil, errors.New("CA certificate did not contain a PEM certificate")
+			}
+			tlsConfig.RootCAs = pool
+		}
+		transport.TLSClientConfig = tlsConfig
+	}
+	return &http.Client{
+		Timeout:   options.timeout,
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}, nil
+}
+
+func openBaoEndpoint(address string, path string) (string, error) {
+	if strings.TrimSpace(address) == "" {
+		return "", errors.New("OpenBao address is required")
+	}
+	parsed, err := url.Parse(address)
+	if err != nil {
+		return "", fmt.Errorf("parse OpenBao address: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", errors.New("OpenBao address must use http or https")
+	}
+	if parsed.Host == "" {
+		return "", errors.New("OpenBao address must include a host")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + path
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
+}
+
+func envOrDefault(name string, fallback string) string {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func auditRotation(
+	store *broker.SQLiteStore,
+	auditPath string,
+	operation broker.RotationOperation,
+	policyID string,
+	reason string,
+) (string, error) {
+	return audit(context.Background(), store, auditPath, auditInput{
+		Subject:   "operator",
+		Operation: protocolv1.Operation_OPERATION_ROTATE.String(),
+		ClusterID: operation.ClusterID,
+		KeyID:     operation.KeyID,
+		Version:   operation.ToVersion,
+		Decision:  "POLICY_DECISION_STATE_ALLOW",
+		PolicyID:  policyID,
+		Reason:    reason,
+	})
+}
+
+func auditRotationWithDecision(
+	store *broker.SQLiteStore,
+	auditPath string,
+	operation broker.RotationOperation,
+	policyID string,
+	decision string,
+	reason string,
+) (string, error) {
+	return audit(context.Background(), store, auditPath, auditInput{
+		Subject:   "operator",
+		Operation: protocolv1.Operation_OPERATION_ROTATE.String(),
+		ClusterID: operation.ClusterID,
+		KeyID:     operation.KeyID,
+		Version:   operation.ToVersion,
+		Decision:  decision,
+		PolicyID:  policyID,
+		Reason:    reason,
+	})
+}
+
+func rotateOutputFromOperation(operation broker.RotationOperation, auditID string) rotateOutput {
+	return rotateOutput{
+		AuditID:     auditID,
+		OperationID: operation.OperationID,
+		ClusterID:   operation.ClusterID,
+		KeyID:       operation.KeyID,
+		FromVersion: operation.FromVersion,
+		ToVersion:   operation.ToVersion,
+		Status:      string(operation.Status),
+	}
+}
+
+func revokeCommand(args []string, stdout io.Writer, stderr io.Writer) error {
+	if len(args) == 0 {
+		return cli.WithExitCode(cli.ExitUsage, errors.New("expected revoke subcommand"))
+	}
+	switch args[0] {
+	case "subject":
+		return revokeSubjectCommand(args[1:], stdout, stderr)
+	case commandStatus:
+		return revokeStatusCommand(args[1:], stdout, stderr)
+	default:
+		return cli.WithExitCode(cli.ExitUsage, fmt.Errorf("unknown revoke subcommand %q", args[0]))
+	}
+}
+
+type revokeSubjectOptions struct {
+	statePath    string
+	auditPath    string
+	clusterID    string
+	subjectID    string
+	mode         string
+	rotationPlan string
+	format       string
+}
+
+func revokeSubjectCommand(args []string, stdout io.Writer, stderr io.Writer) error {
+	flags := flag.NewFlagSet("revoke subject", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	statePath := flags.String("state", "", "Path to broker SQLite state.")
+	auditPath := flags.String("audit-file", "", "Optional JSONL audit file path.")
+	clusterID := flags.String("cluster-id", "prod-eu1", "Cluster identifier.")
+	subjectID := flags.String("subject-id", "", "Subject identifier.")
+	mode := flags.String("mode", revocationModeBroker, "Revocation mode: broker or local-tpm.")
+	rotationPlan := flags.String("rotation-plan", "", "Required rotation plan identifier for local-tpm mode.")
+	format := flags.String("format", formatText, "Output format: text or json.")
+	if err := flags.Parse(args); err != nil {
+		return cli.WithExitCode(cli.ExitUsage, err)
+	}
+	if err := validateFormat(*format); err != nil {
+		return err
+	}
+	normalizedMode, err := validateRevocationMode(*mode)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(*statePath) == "" || strings.TrimSpace(*subjectID) == "" {
+		return cli.WithExitCode(cli.ExitUsage, errors.New("-state and -subject-id are required"))
+	}
+	if normalizedMode == revocationModeLocalTPM && strings.TrimSpace(*rotationPlan) == "" {
+		return cli.WithExitCode(cli.ExitUsage, errors.New("-rotation-plan is required for local-tpm revocation"))
+	}
+	options := revokeSubjectOptions{
+		statePath:    *statePath,
+		auditPath:    *auditPath,
+		clusterID:    strings.TrimSpace(*clusterID),
+		subjectID:    strings.TrimSpace(*subjectID),
+		mode:         normalizedMode,
+		rotationPlan: strings.TrimSpace(*rotationPlan),
+		format:       *format,
+	}
+	out, err := revokeSubject(options)
+	if err != nil {
+		return err
+	}
+	return writeOutput(stdout, options.format, out, func() {
+		_, _ = fmt.Fprintf(stdout, "Revoked subject: %s\n", out.SubjectID)
+		_, _ = fmt.Fprintf(stdout, "Audit ID: %s\n", out.AuditID)
+		for _, warning := range out.Warnings {
+			_, _ = fmt.Fprintf(stdout, "Warning: %s\n", warning)
+		}
+	})
+}
+
+func revokeSubject(options revokeSubjectOptions) (revokeSubjectOutput, error) {
+	store, err := broker.OpenSQLiteStore(context.Background(), options.statePath)
+	if err != nil {
+		return revokeSubjectOutput{}, cli.WithExitCode(cli.ExitConfig, err)
+	}
+	defer func() { _ = store.Close() }()
+	if err := store.RevokeSubject(context.Background(), options.clusterID, options.subjectID); err != nil {
+		return revokeSubjectOutput{}, cli.WithExitCode(cli.ExitCheckFailed, err)
+	}
+	auditID, err := audit(context.Background(), store, options.auditPath, auditInput{
+		Subject:   options.subjectID,
+		Operation: operationRevoke,
+		ClusterID: options.clusterID,
+		Decision:  "POLICY_DECISION_STATE_ALLOW",
+		PolicyID:  "revocation",
+		Reason:    "subject revoked",
+	})
+	if err != nil {
+		return revokeSubjectOutput{}, cli.WithExitCode(cli.ExitRuntime, err)
+	}
+	return revokeSubjectOutput{
+		AuditID:      auditID,
+		ClusterID:    options.clusterID,
+		SubjectID:    options.subjectID,
+		Revoked:      true,
+		Mode:         options.mode,
+		RotationPlan: options.rotationPlan,
+		Warnings:     revocationWarnings(options.mode),
+	}, nil
+}
+
+func revokeStatusCommand(args []string, stdout io.Writer, stderr io.Writer) error {
+	flags := flag.NewFlagSet("revoke status", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	statePath := flags.String("state", "", "Path to broker SQLite state.")
+	clusterID := flags.String("cluster-id", "prod-eu1", "Cluster identifier.")
+	subjectID := flags.String("subject-id", "", "Subject identifier.")
+	format := flags.String("format", formatText, "Output format: text or json.")
+	if err := flags.Parse(args); err != nil {
+		return cli.WithExitCode(cli.ExitUsage, err)
+	}
+	if err := validateFormat(*format); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*statePath) == "" || strings.TrimSpace(*subjectID) == "" {
+		return cli.WithExitCode(cli.ExitUsage, errors.New("-state and -subject-id are required"))
+	}
+	cluster := strings.TrimSpace(*clusterID)
+	subject := strings.TrimSpace(*subjectID)
+	store, err := broker.OpenSQLiteStore(context.Background(), *statePath)
+	if err != nil {
+		return cli.WithExitCode(cli.ExitConfig, err)
+	}
+	defer func() { _ = store.Close() }()
+	revoked := false
+	if _, err := store.Subject(context.Background(), cluster, subject); err != nil {
+		if !errors.Is(err, broker.ErrSubjectRevoked) {
+			return cli.WithExitCode(cli.ExitCheckFailed, err)
+		}
+		revoked = true
+	}
+	out := revokeStatusOutput{ClusterID: cluster, SubjectID: subject, Revoked: revoked}
+	return writeOutput(stdout, *format, out, func() {
+		_, _ = fmt.Fprintf(stdout, "Subject: %s\n", out.SubjectID)
+		_, _ = fmt.Fprintf(stdout, "Revoked: %t\n", out.Revoked)
+	})
+}
+
 func tpmCommand(args []string, stdout io.Writer, stderr io.Writer) error {
 	if len(args) == 0 {
 		return cli.WithExitCode(cli.ExitUsage, errors.New("expected tpm subcommand"))
@@ -607,7 +1210,7 @@ func tpmCommand(args []string, stdout io.Writer, stderr io.Writer) error {
 	switch args[0] {
 	case "provision":
 		return tpmProvisionCommand(args[1:], stdout, stderr)
-	case "status":
+	case commandStatus:
 		return tpmStatusCommand(args[1:], stdout, stderr)
 	default:
 		return cli.WithExitCode(cli.ExitUsage, fmt.Errorf("unknown tpm subcommand %q", args[0]))
@@ -1376,6 +1979,44 @@ type recoverFinishOutput struct {
 	SessionID string `json:"session_id"`
 }
 
+type rotateOutput struct {
+	AuditID     string `json:"audit_id,omitempty"`
+	OperationID string `json:"operation_id"`
+	ClusterID   string `json:"cluster_id"`
+	KeyID       string `json:"key_id"`
+	FromVersion uint32 `json:"from_version"`
+	ToVersion   uint32 `json:"to_version"`
+	Status      string `json:"status"`
+}
+
+type rotateOpenBAORootOutput struct {
+	AuditID     string `json:"audit_id"`
+	OperationID string `json:"operation_id"`
+	ClusterID   string `json:"cluster_id"`
+	KeyID       string `json:"key_id"`
+	FromVersion uint32 `json:"from_version"`
+	ToVersion   uint32 `json:"to_version"`
+	Status      string `json:"status"`
+	Endpoint    string `json:"endpoint"`
+	HTTPStatus  int    `json:"http_status"`
+}
+
+type revokeSubjectOutput struct {
+	AuditID      string   `json:"audit_id"`
+	ClusterID    string   `json:"cluster_id"`
+	SubjectID    string   `json:"subject_id"`
+	Revoked      bool     `json:"revoked"`
+	Mode         string   `json:"mode"`
+	RotationPlan string   `json:"rotation_plan,omitempty"`
+	Warnings     []string `json:"warnings,omitempty"`
+}
+
+type revokeStatusOutput struct {
+	ClusterID string `json:"cluster_id"`
+	SubjectID string `json:"subject_id"`
+	Revoked   bool   `json:"revoked"`
+}
+
 type tpmProvisionOutput struct {
 	StatePath  string   `json:"state_path"`
 	KeyID      string   `json:"key_id"`
@@ -1438,6 +2079,28 @@ func validateApprovalMode(mode string) (string, error) {
 		)
 	default:
 		return "", cli.WithExitCode(cli.ExitUsage, fmt.Errorf("unsupported approval mode %q", mode))
+	}
+}
+
+func validateRevocationMode(mode string) (string, error) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case "", revocationModeBroker:
+		return revocationModeBroker, nil
+	case revocationModeLocalTPM:
+		return revocationModeLocalTPM, nil
+	default:
+		return "", cli.WithExitCode(cli.ExitUsage, fmt.Errorf("unsupported revocation mode %q", mode))
+	}
+}
+
+func revocationWarnings(mode string) []string {
+	if mode != revocationModeLocalTPM {
+		return nil
+	}
+	return []string{
+		"local TPM revocation does not remove TPM-sealed key material",
+		"rotate the wrapping key and assess old backups before treating the node as revoked",
 	}
 }
 
@@ -1656,6 +2319,10 @@ func printUsage(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl recover enroll -state broker.db -package recovery.json \\")
 	_, _ = fmt.Fprintln(out, "    -shares-file shares.json -session session.json -request target-request.json")
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl recover finish -session session.json")
+	_, _ = fmt.Fprintln(out, "  bao-unsealctl rotate start -state broker.db")
+	_, _ = fmt.Fprintln(out, "  bao-unsealctl rotate activate -state broker.db -operation-id rot_...")
+	_, _ = fmt.Fprintln(out, "  BAO_TOKEN=... bao-unsealctl rotate openbao-root -state broker.db -operation-id rot_...")
+	_, _ = fmt.Fprintln(out, "  bao-unsealctl revoke subject -state broker.db -subject-id node-a")
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl tpm provision -state-path /var/lib/openbao-attested-unseal \\")
 	_, _ = fmt.Fprintln(out, "    -package recovery.json -shares-file shares.json")
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl tpm status -state-path /var/lib/openbao-attested-unseal")

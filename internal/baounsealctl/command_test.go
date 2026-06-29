@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,8 +18,11 @@ import (
 	"github.com/adfinis/openbao-attested-unseal/internal/broker"
 	"github.com/adfinis/openbao-attested-unseal/internal/cli"
 	"github.com/adfinis/openbao-attested-unseal/internal/enrollment"
+	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 	"github.com/adfinis/openbao-attested-unseal/internal/version"
 )
+
+const testActiveKeyV1 = "prod-eu1/root/v1"
 
 func TestInitAndStatusJSON(t *testing.T) {
 	dir := t.TempDir()
@@ -60,8 +66,8 @@ func TestInitAndStatusJSON(t *testing.T) {
 	if !status.Ready {
 		t.Fatal("status ready = false, want true")
 	}
-	if status.ActiveKeyID != "prod-eu1/root/v1" {
-		t.Fatalf("active key = %q, want prod-eu1/root/v1", status.ActiveKeyID)
+	if status.ActiveKeyID != testActiveKeyV1 {
+		t.Fatalf("active key = %q, want %s", status.ActiveKeyID, testActiveKeyV1)
 	}
 }
 
@@ -292,6 +298,312 @@ func TestRecoveryEnrollmentRestoresFreshBrokerState(t *testing.T) {
 	}
 }
 
+func TestRotationStartStatusActivateJSON(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "broker.db")
+	recoveryPath := filepath.Join(dir, "recovery.json")
+
+	var initOut initOutput
+	runJSON(t, &initOut,
+		"init",
+		"-state", statePath,
+		"-recovery-package", recoveryPath,
+		"-cluster-id", "prod-eu1",
+		"-key-id", "root",
+		"-format", "json",
+	)
+
+	var started rotateOutput
+	runJSON(t, &started,
+		"rotate", "start",
+		"-state", statePath,
+		"-cluster-id", "prod-eu1",
+		"-key-id", "root",
+		"-policy-id", "rotation",
+		"-format", "json",
+	)
+	if started.AuditID == "" || started.OperationID == "" {
+		t.Fatal("rotation start output is missing IDs")
+	}
+	if started.FromVersion != 1 || started.ToVersion != 2 || started.Status != string(broker.RotationStatusStarted) {
+		t.Fatalf("started rotation = %#v, want v1 -> v2 started", started)
+	}
+
+	var rotationStatus rotateOutput
+	runJSON(t, &rotationStatus,
+		"rotate", "status",
+		"-state", statePath,
+		"-operation-id", started.OperationID,
+		"-format", "json",
+	)
+	if rotationStatus.Status != string(broker.RotationStatusStarted) {
+		t.Fatalf("rotation status = %q, want started", rotationStatus.Status)
+	}
+
+	var statusBefore statusOutput
+	runJSON(t, &statusBefore, "status", "-state", statePath, "-cluster-id", "prod-eu1", "-format", "json")
+	if statusBefore.ActiveKeyID != testActiveKeyV1 {
+		t.Fatalf("active key before activation = %q, want %s", statusBefore.ActiveKeyID, testActiveKeyV1)
+	}
+
+	var activated rotateOutput
+	runJSON(t, &activated,
+		"rotate", "activate",
+		"-state", statePath,
+		"-operation-id", started.OperationID,
+		"-format", "json",
+	)
+	if activated.Status != string(broker.RotationStatusActivated) {
+		t.Fatalf("activated status = %q, want activated", activated.Status)
+	}
+
+	var statusAfter statusOutput
+	runJSON(t, &statusAfter, "status", "-state", statePath, "-cluster-id", "prod-eu1", "-format", "json")
+	if statusAfter.ActiveKeyID != "prod-eu1/root/v2" {
+		t.Fatalf("active key after activation = %q, want prod-eu1/root/v2", statusAfter.ActiveKeyID)
+	}
+
+	store, err := broker.OpenSQLiteStore(context.Background(), statePath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore returned error: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	assertCLIKeyStatus(t, store, "prod-eu1", "root", 1, keyring.StatusDecryptOnly)
+	assertCLIKeyStatus(t, store, "prod-eu1", "root", 2, keyring.StatusActive)
+}
+
+func TestRotateOpenBAORootJSON(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "broker.db")
+	recoveryPath := filepath.Join(dir, "recovery.json")
+	auditPath := filepath.Join(dir, "audit.jsonl")
+
+	var initOut initOutput
+	runJSON(t, &initOut, "init", "-state", statePath, "-recovery-package", recoveryPath, "-format", "json")
+	var started rotateOutput
+	runJSON(t, &started, "rotate", "start", "-state", statePath, "-format", "json")
+	var activated rotateOutput
+	runJSON(t, &activated,
+		"rotate", "activate",
+		"-state", statePath,
+		"-operation-id", started.OperationID,
+		"-format", "json",
+	)
+
+	seen := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen++
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/v1/sys/rotate/root" {
+			t.Errorf("path = %s, want /v1/sys/rotate/root", r.URL.Path)
+		}
+		if r.Header.Get("X-Vault-Request") != "true" {
+			t.Errorf("X-Vault-Request = %q, want true", r.Header.Get("X-Vault-Request"))
+		}
+		if r.Header.Get("X-Vault-Token") != "test-token" {
+			t.Errorf("X-Vault-Token = %q, want test-token", r.Header.Get("X-Vault-Token"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	t.Setenv("BAO_TOKEN", "test-token")
+	var out rotateOpenBAORootOutput
+	runJSON(t, &out,
+		"rotate", "openbao-root",
+		"-state", statePath,
+		"-audit-file", auditPath,
+		"-operation-id", activated.OperationID,
+		"-addr", server.URL,
+		"-format", "json",
+	)
+	if seen != 1 {
+		t.Fatalf("OpenBao server calls = %d, want 1", seen)
+	}
+	if out.AuditID == "" || out.OperationID != activated.OperationID || out.HTTPStatus != http.StatusNoContent {
+		t.Fatalf("openbao-root output = %#v", out)
+	}
+	if out.Endpoint != server.URL+"/v1/sys/rotate/root" {
+		t.Fatalf("endpoint = %q, want %s", out.Endpoint, server.URL+"/v1/sys/rotate/root")
+	}
+	// #nosec G304 -- test reads the audit file generated under t.TempDir.
+	auditFile, err := os.ReadFile(auditPath)
+	if err != nil {
+		t.Fatalf("ReadFile audit returned error: %v", err)
+	}
+	if strings.Contains(string(auditFile), "test-token") {
+		t.Fatal("audit file contains BAO_TOKEN")
+	}
+	if !strings.Contains(string(auditFile), "openbao root key rotation completed") {
+		t.Fatalf("audit file does not contain success reason: %s", auditFile)
+	}
+}
+
+func TestRotateOpenBAORootRequiresActivatedOperation(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "broker.db")
+	recoveryPath := filepath.Join(dir, "recovery.json")
+
+	var initOut initOutput
+	runJSON(t, &initOut, "init", "-state", statePath, "-recovery-package", recoveryPath, "-format", "json")
+	var started rotateOutput
+	runJSON(t, &started, "rotate", "start", "-state", statePath, "-format", "json")
+
+	seen := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		seen++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	t.Setenv("BAO_TOKEN", "test-token")
+	err := runCommand(
+		"rotate", "openbao-root",
+		"-state", statePath,
+		"-operation-id", started.OperationID,
+		"-addr", server.URL,
+	)
+	if err == nil {
+		t.Fatal("openbao-root returned nil error, want activation error")
+	}
+	var exitErr cli.ExitErrorWithCode
+	if !errors.As(err, &exitErr) || exitErr.Code != cli.ExitCheckFailed {
+		t.Fatalf("openbao-root exit error = %v, want ExitCheckFailed", err)
+	}
+	if seen != 0 {
+		t.Fatalf("OpenBao server calls = %d, want 0", seen)
+	}
+}
+
+func TestRotateOpenBAORootRequiresBAOToken(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "broker.db")
+	recoveryPath := filepath.Join(dir, "recovery.json")
+
+	var initOut initOutput
+	runJSON(t, &initOut, "init", "-state", statePath, "-recovery-package", recoveryPath, "-format", "json")
+	var started rotateOutput
+	runJSON(t, &started, "rotate", "start", "-state", statePath, "-format", "json")
+	var activated rotateOutput
+	runJSON(t, &activated,
+		"rotate", "activate",
+		"-state", statePath,
+		"-operation-id", started.OperationID,
+		"-format", "json",
+	)
+
+	t.Setenv("BAO_TOKEN", "")
+	err := runCommand(
+		"rotate", "openbao-root",
+		"-state", statePath,
+		"-operation-id", activated.OperationID,
+		"-addr", "http://127.0.0.1:8200",
+	)
+	if err == nil {
+		t.Fatal("openbao-root returned nil error, want BAO_TOKEN error")
+	}
+	var exitErr cli.ExitErrorWithCode
+	if !errors.As(err, &exitErr) || exitErr.Code != cli.ExitConfig {
+		t.Fatalf("openbao-root exit error = %v, want ExitConfig", err)
+	}
+}
+
+func TestRevokeSubjectJSON(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "broker.db")
+	recoveryPath := filepath.Join(dir, "recovery.json")
+
+	var initOut initOutput
+	runJSON(t, &initOut,
+		"init",
+		"-state", statePath,
+		"-recovery-package", recoveryPath,
+		"-cluster-id", "prod-eu1",
+		"-format", "json",
+	)
+	store, err := broker.OpenSQLiteStore(context.Background(), statePath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore returned error: %v", err)
+	}
+	if err := store.InsertSubject(context.Background(), "prod-eu1", "node-a", time.Now()); err != nil {
+		t.Fatalf("InsertSubject returned error: %v", err)
+	}
+
+	var revoked revokeSubjectOutput
+	runJSON(t, &revoked,
+		"revoke", "subject",
+		"-state", statePath,
+		"-cluster-id", "prod-eu1",
+		"-subject-id", "node-a",
+		"-format", "json",
+	)
+	if revoked.AuditID == "" || !revoked.Revoked || revoked.Mode != revocationModeBroker {
+		t.Fatalf("revoked output = %#v, want broker revocation with audit ID", revoked)
+	}
+	if _, err := store.Subject(context.Background(), "prod-eu1", "node-a"); !errors.Is(err, broker.ErrSubjectRevoked) {
+		t.Fatalf("Subject error = %v, want ErrSubjectRevoked", err)
+	}
+	_ = store.Close()
+
+	var status revokeStatusOutput
+	runJSON(t, &status,
+		"revoke", "status",
+		"-state", statePath,
+		"-cluster-id", "prod-eu1",
+		"-subject-id", "node-a",
+		"-format", "json",
+	)
+	if !status.Revoked {
+		t.Fatalf("revoke status = %#v, want revoked", status)
+	}
+}
+
+func TestLocalTPMRevokeRequiresRotationPlanAndWarns(t *testing.T) {
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "broker.db")
+	recoveryPath := filepath.Join(dir, "recovery.json")
+
+	var initOut initOutput
+	runJSON(t, &initOut, "init", "-state", statePath, "-recovery-package", recoveryPath, "-format", "json")
+	store, err := broker.OpenSQLiteStore(context.Background(), statePath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore returned error: %v", err)
+	}
+	if err := store.InsertSubject(context.Background(), "prod-eu1", "node-tpm", time.Now()); err != nil {
+		t.Fatalf("InsertSubject returned error: %v", err)
+	}
+	_ = store.Close()
+
+	err = runCommand(
+		"revoke", "subject",
+		"-state", statePath,
+		"-subject-id", "node-tpm",
+		"-mode", "local-tpm",
+		"-format", "json",
+	)
+	if got := cli.ProcessExitCode(err); got != int(cli.ExitUsage) {
+		t.Fatalf("local-tpm revoke without plan exit code = %d, want %d", got, cli.ExitUsage)
+	}
+
+	var revoked revokeSubjectOutput
+	runJSON(t, &revoked,
+		"revoke", "subject",
+		"-state", statePath,
+		"-subject-id", "node-tpm",
+		"-mode", "local-tpm",
+		"-rotation-plan", "rot_planned",
+		"-format", "json",
+	)
+	if revoked.RotationPlan != "rot_planned" || !containsString(
+		revoked.Warnings,
+		"local TPM revocation does not remove TPM-sealed key material",
+	) {
+		t.Fatalf("local-tpm revoke output = %#v, want rotation plan warning", revoked)
+	}
+}
+
 func TestUnsafeLocalFilePermissionsRejected(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "broker.db")
@@ -501,6 +813,28 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func assertCLIKeyStatus(
+	t *testing.T,
+	store *broker.SQLiteStore,
+	clusterID string,
+	keyID string,
+	keyVersion uint32,
+	status keyring.Status,
+) {
+	t.Helper()
+	got, err := store.KeyVersion(context.Background(), keyring.KeyRef{
+		ClusterID: clusterID,
+		KeyID:     keyID,
+		Version:   keyVersion,
+	})
+	if err != nil {
+		t.Fatalf("KeyVersion returned error: %v", err)
+	}
+	if got.Status != status {
+		t.Fatalf("key status = %q, want %q", got.Status, status)
+	}
 }
 
 func startSWTPMForCTL(t *testing.T) (string, func()) {

@@ -122,6 +122,28 @@ CREATE UNIQUE INDEX IF NOT EXISTS key_versions_one_active
 ON key_versions(cluster_id, key_id)
 WHERE status = 'active';
 
+CREATE TABLE IF NOT EXISTS rotation_operations (
+  operation_id TEXT PRIMARY KEY,
+  cluster_id TEXT NOT NULL,
+  key_id TEXT NOT NULL,
+  from_version INTEGER NOT NULL,
+  to_version INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  activated_at TEXT,
+  cancelled_at TEXT,
+  FOREIGN KEY (cluster_id, key_id) REFERENCES keyrings(cluster_id, key_id),
+  FOREIGN KEY (cluster_id, key_id, from_version) REFERENCES key_versions(cluster_id, key_id, version),
+  FOREIGN KEY (cluster_id, key_id, to_version) REFERENCES key_versions(cluster_id, key_id, version),
+  CHECK (from_version > 0),
+  CHECK (to_version > 0)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS rotation_operations_one_started
+ON rotation_operations(cluster_id, key_id)
+WHERE status = 'started';
+
 CREATE TABLE IF NOT EXISTS subjects (
   cluster_id TEXT NOT NULL,
   subject_id TEXT NOT NULL,
@@ -220,6 +242,9 @@ VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 }
 
@@ -594,6 +619,156 @@ func (s *SQLiteStore) ConsumeEnrollmentGrant(ctx context.Context, grantID string
 	return nil
 }
 
+// StartRotation creates a pending key version and durable rotation operation.
+func (s *SQLiteStore) StartRotation(
+	ctx context.Context,
+	request RotationStartRequest,
+) (RotationOperation, error) {
+	if err := validateRotationStart(request); err != nil {
+		return RotationOperation{}, err
+	}
+	now := request.CreatedAt.UTC()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RotationOperation{}, fmt.Errorf("begin rotation start transaction: %w", err)
+	}
+	defer rollbackUnlessCommitted(tx)
+
+	if err := ensureNoStartedRotation(ctx, tx, request.ClusterID, request.KeyID); err != nil {
+		return RotationOperation{}, err
+	}
+	fromVersion, toVersion, err := nextRotationVersions(ctx, tx, request.ClusterID, request.KeyID)
+	if err != nil {
+		return RotationOperation{}, err
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO key_versions(cluster_id, key_id, version, status, algorithm, policy_id, material, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		request.ClusterID,
+		request.KeyID,
+		toVersion,
+		string(keyring.StatusPending),
+		string(keyring.AlgorithmAES256GCM),
+		request.PolicyID,
+		request.Material,
+		now.Format(time.RFC3339Nano),
+	); err != nil {
+		return RotationOperation{}, fmt.Errorf("insert pending key version: %w", err)
+	}
+	operation := RotationOperation{
+		OperationID: request.OperationID,
+		ClusterID:   request.ClusterID,
+		KeyID:       request.KeyID,
+		FromVersion: fromVersion,
+		ToVersion:   toVersion,
+		Status:      RotationStatusStarted,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO rotation_operations(operation_id, cluster_id, key_id, from_version, to_version,
+		 status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		operation.OperationID,
+		operation.ClusterID,
+		operation.KeyID,
+		operation.FromVersion,
+		operation.ToVersion,
+		string(operation.Status),
+		operation.CreatedAt.Format(time.RFC3339Nano),
+		operation.UpdatedAt.Format(time.RFC3339Nano),
+	); err != nil {
+		return RotationOperation{}, fmt.Errorf("insert rotation operation: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return RotationOperation{}, fmt.Errorf("commit rotation start transaction: %w", err)
+	}
+	return operation, nil
+}
+
+// ActivateRotation promotes a pending key and demotes the previous active key.
+func (s *SQLiteStore) ActivateRotation(
+	ctx context.Context,
+	operationID string,
+	now time.Time,
+) (RotationOperation, error) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	now = now.UTC()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RotationOperation{}, fmt.Errorf("begin rotation activation transaction: %w", err)
+	}
+	defer rollbackUnlessCommitted(tx)
+
+	operation, err := queryRotationOperationTx(ctx, tx, operationID)
+	if err != nil {
+		return RotationOperation{}, err
+	}
+	switch operation.Status {
+	case RotationStatusActivated:
+		if err := tx.Commit(); err != nil {
+			return RotationOperation{}, fmt.Errorf("commit idempotent rotation activation: %w", err)
+		}
+		return operation, nil
+	case RotationStatusStarted:
+	default:
+		return RotationOperation{}, ErrRotationInvalidTransition
+	}
+	if err := updateKeyStatus(
+		ctx,
+		tx,
+		operation.ClusterID,
+		operation.KeyID,
+		operation.FromVersion,
+		keyring.StatusActive,
+		keyring.StatusDecryptOnly,
+	); err != nil {
+		return RotationOperation{}, err
+	}
+	if err := updateKeyStatus(
+		ctx,
+		tx,
+		operation.ClusterID,
+		operation.KeyID,
+		operation.ToVersion,
+		keyring.StatusPending,
+		keyring.StatusActive,
+	); err != nil {
+		return RotationOperation{}, err
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`UPDATE rotation_operations
+		 SET status = ?, activated_at = ?, updated_at = ?
+		 WHERE operation_id = ?`,
+		string(RotationStatusActivated),
+		now.Format(time.RFC3339Nano),
+		now.Format(time.RFC3339Nano),
+		operation.OperationID,
+	); err != nil {
+		return RotationOperation{}, fmt.Errorf("update rotation operation: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return RotationOperation{}, fmt.Errorf("commit rotation activation transaction: %w", err)
+	}
+	operation.Status = RotationStatusActivated
+	operation.UpdatedAt = now
+	operation.ActivatedAt = now
+	return operation, nil
+}
+
+// RotationOperation loads one durable rotation operation.
+func (s *SQLiteStore) RotationOperation(ctx context.Context, operationID string) (RotationOperation, error) {
+	return queryRotationOperation(ctx, s.db, operationID)
+}
+
 // CreateChallenge stores one broker challenge.
 func (s *SQLiteStore) CreateChallenge(ctx context.Context, challenge Challenge) error {
 	_, err := s.db.ExecContext(
@@ -750,6 +925,180 @@ func (s *SQLiteStore) AuditEvents(ctx context.Context) ([]AuditEvent, error) {
 		return nil, fmt.Errorf("iterate audit events: %w", err)
 	}
 	return events, nil
+}
+
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+}
+
+func ensureNoStartedRotation(ctx context.Context, tx *sql.Tx, clusterID string, keyID string) error {
+	var operationID string
+	err := tx.QueryRowContext(
+		ctx,
+		`SELECT operation_id
+		 FROM rotation_operations
+		 WHERE cluster_id = ? AND key_id = ? AND status = ?
+		 LIMIT 1`,
+		clusterID,
+		keyID,
+		string(RotationStatusStarted),
+	).Scan(&operationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("query started rotation operation: %w", err)
+	}
+	return fmt.Errorf("%w: %s", ErrRotationInProgress, operationID)
+}
+
+func nextRotationVersions(ctx context.Context, tx *sql.Tx, clusterID string, keyID string) (uint32, uint32, error) {
+	var activeVersion int64
+	err := tx.QueryRowContext(
+		ctx,
+		`SELECT version
+		 FROM key_versions
+		 WHERE cluster_id = ? AND key_id = ? AND status = ?`,
+		clusterID,
+		keyID,
+		string(keyring.StatusActive),
+	).Scan(&activeVersion)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, 0, keyring.ErrKeyNotUsable
+	}
+	if err != nil {
+		return 0, 0, fmt.Errorf("query active key version: %w", err)
+	}
+	var maxVersion int64
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT MAX(version)
+		 FROM key_versions
+		 WHERE cluster_id = ? AND key_id = ?`,
+		clusterID,
+		keyID,
+	).Scan(&maxVersion); err != nil {
+		return 0, 0, fmt.Errorf("query max key version: %w", err)
+	}
+	if maxVersion >= maxKeyVersion {
+		return 0, 0, fmt.Errorf("%w: key version limit reached", ErrRotationInvalidTransition)
+	}
+	fromVersion, err := uint32KeyVersion(activeVersion)
+	if err != nil {
+		return 0, 0, err
+	}
+	toVersion, err := uint32KeyVersion(maxVersion + 1)
+	if err != nil {
+		return 0, 0, err
+	}
+	return fromVersion, toVersion, nil
+}
+
+func updateKeyStatus(
+	ctx context.Context,
+	tx *sql.Tx,
+	clusterID string,
+	keyID string,
+	version uint32,
+	from keyring.Status,
+	to keyring.Status,
+) error {
+	result, err := tx.ExecContext(
+		ctx,
+		`UPDATE key_versions
+		 SET status = ?
+		 WHERE cluster_id = ? AND key_id = ? AND version = ? AND status = ?`,
+		string(to),
+		clusterID,
+		keyID,
+		version,
+		string(from),
+	)
+	if err != nil {
+		return fmt.Errorf("update key version status: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read key status update result: %w", err)
+	}
+	if affected != 1 {
+		return ErrRotationInvalidTransition
+	}
+	return nil
+}
+
+func queryRotationOperation(ctx context.Context, db rowQuerier, operationID string) (RotationOperation, error) {
+	return scanRotationOperation(db.QueryRowContext(
+		ctx,
+		`SELECT operation_id, cluster_id, key_id, from_version, to_version, status,
+		 created_at, updated_at, activated_at
+		 FROM rotation_operations
+		 WHERE operation_id = ?`,
+		operationID,
+	))
+}
+
+func queryRotationOperationTx(ctx context.Context, tx *sql.Tx, operationID string) (RotationOperation, error) {
+	return queryRotationOperation(ctx, tx, operationID)
+}
+
+func scanRotationOperation(row *sql.Row) (RotationOperation, error) {
+	var operation RotationOperation
+	var fromVersion int64
+	var toVersion int64
+	var status string
+	var createdRaw string
+	var updatedRaw string
+	var activatedRaw sql.NullString
+	err := row.Scan(
+		&operation.OperationID,
+		&operation.ClusterID,
+		&operation.KeyID,
+		&fromVersion,
+		&toVersion,
+		&status,
+		&createdRaw,
+		&updatedRaw,
+		&activatedRaw,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RotationOperation{}, ErrRotationNotFound
+	}
+	if err != nil {
+		return RotationOperation{}, fmt.Errorf("query rotation operation: %w", err)
+	}
+	var parseErr error
+	operation.FromVersion, parseErr = uint32KeyVersion(fromVersion)
+	if parseErr != nil {
+		return RotationOperation{}, parseErr
+	}
+	operation.ToVersion, parseErr = uint32KeyVersion(toVersion)
+	if parseErr != nil {
+		return RotationOperation{}, parseErr
+	}
+	operation.Status = RotationStatus(status)
+	operation.CreatedAt, parseErr = time.Parse(time.RFC3339Nano, createdRaw)
+	if parseErr != nil {
+		return RotationOperation{}, fmt.Errorf("parse rotation created_at: %w", parseErr)
+	}
+	operation.UpdatedAt, parseErr = time.Parse(time.RFC3339Nano, updatedRaw)
+	if parseErr != nil {
+		return RotationOperation{}, fmt.Errorf("parse rotation updated_at: %w", parseErr)
+	}
+	if activatedRaw.Valid {
+		operation.ActivatedAt, parseErr = time.Parse(time.RFC3339Nano, activatedRaw.String)
+		if parseErr != nil {
+			return RotationOperation{}, fmt.Errorf("parse rotation activated_at: %w", parseErr)
+		}
+	}
+	return operation, nil
+}
+
+func uint32KeyVersion(value int64) (uint32, error) {
+	if value <= 0 || value > maxKeyVersion {
+		return 0, fmt.Errorf("key version exceeds uint32: %d", value)
+	}
+	return uint32(value), nil
 }
 
 func rollbackUnlessCommitted(tx *sql.Tx) {

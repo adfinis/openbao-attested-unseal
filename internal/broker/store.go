@@ -22,6 +22,12 @@ var (
 	ErrChallengeReplayed = errors.New("challenge already consumed")
 	// ErrChallengeMismatch indicates challenge scope does not match the request.
 	ErrChallengeMismatch = errors.New("challenge scope mismatch")
+	// ErrRotationNotFound indicates an unknown rotation operation.
+	ErrRotationNotFound = errors.New("rotation operation not found")
+	// ErrRotationInProgress indicates another rotation is already started for a keyring.
+	ErrRotationInProgress = errors.New("rotation operation already in progress")
+	// ErrRotationInvalidTransition indicates a requested rotation transition is not allowed.
+	ErrRotationInvalidTransition = errors.New("rotation transition is invalid")
 )
 
 // Challenge is broker replay-prevention state.
@@ -90,6 +96,41 @@ type EnrollmentGrantRecord struct {
 	CreatedAt time.Time
 }
 
+// RotationStatus is the lifecycle state of one key rotation operation.
+type RotationStatus string
+
+const (
+	// RotationStatusStarted means the new key version exists but is pending.
+	RotationStatusStarted RotationStatus = "started"
+	// RotationStatusActivated means the pending key was promoted to active.
+	RotationStatusActivated RotationStatus = "activated"
+	// RotationStatusCancelled means the operation was abandoned before activation.
+	RotationStatusCancelled RotationStatus = "cancelled"
+)
+
+// RotationStartRequest creates a pending wrapping-key version.
+type RotationStartRequest struct {
+	OperationID string
+	ClusterID   string
+	KeyID       string
+	PolicyID    string
+	Material    []byte
+	CreatedAt   time.Time
+}
+
+// RotationOperation is durable rotation workflow state.
+type RotationOperation struct {
+	OperationID string
+	ClusterID   string
+	KeyID       string
+	FromVersion uint32
+	ToVersion   uint32
+	Status      RotationStatus
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	ActivatedAt time.Time
+}
+
 // Store persists broker state.
 type Store interface {
 	Close() error
@@ -104,6 +145,9 @@ type Store interface {
 	InsertEnrollmentRequest(ctx context.Context, record EnrollmentRequestRecord) error
 	InsertEnrollmentGrant(ctx context.Context, record EnrollmentGrantRecord) error
 	ConsumeEnrollmentGrant(ctx context.Context, grantID string, now time.Time) error
+	StartRotation(ctx context.Context, request RotationStartRequest) (RotationOperation, error)
+	ActivateRotation(ctx context.Context, operationID string, now time.Time) (RotationOperation, error)
+	RotationOperation(ctx context.Context, operationID string) (RotationOperation, error)
 	CreateChallenge(ctx context.Context, challenge Challenge) error
 	ConsumeChallenge(
 		ctx context.Context,
