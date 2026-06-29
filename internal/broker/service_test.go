@@ -46,6 +46,44 @@ func TestSQLiteMigrationIdempotency(t *testing.T) {
 	}
 }
 
+func TestSQLiteNodeEvidencePersistsAndLists(t *testing.T) {
+	config := testConfig(t)
+	store := newTestStore(t, config)
+	now := time.Unix(1_800_000_000, 0).UTC()
+	putTestNodeEvidence(t, store, config, "node-uid", now, now.Add(time.Minute))
+
+	fresh, err := store.FreshNodeEvidence(context.Background(), config.ClusterID, testNodeName, now)
+	if err != nil {
+		t.Fatalf("FreshNodeEvidence returned error: %v", err)
+	}
+	if fresh.NodeUID != "node-uid" {
+		t.Fatalf("fresh node UID = %q, want node-uid", fresh.NodeUID)
+	}
+	list, err := store.ListNodeEvidence(context.Background(), config.ClusterID, "")
+	if err != nil {
+		t.Fatalf("ListNodeEvidence returned error: %v", err)
+	}
+	if len(list) != 1 || list[0].NodeName != testNodeName {
+		t.Fatalf("list = %#v, want one %s record", list, testNodeName)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+
+	reopened, err := OpenSQLiteStore(context.Background(), config.SQLitePath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore reopened returned error: %v", err)
+	}
+	defer func() { _ = reopened.Close() }()
+	reloaded, err := reopened.NodeEvidence(context.Background(), config.ClusterID, testNodeName)
+	if err != nil {
+		t.Fatalf("NodeEvidence after reopen returned error: %v", err)
+	}
+	if reloaded.EvidenceHash != "test-node-evidence-hash" || !reloaded.ExpiresAt.Equal(now.Add(time.Minute)) {
+		t.Fatalf("reloaded evidence = %#v, want persisted hash and expiry", reloaded)
+	}
+}
+
 func TestChallengeExpiry(t *testing.T) {
 	config := testConfig(t)
 	store := newTestStore(t, config)
@@ -353,10 +391,50 @@ func TestRuntimeKubernetesVerifierUsesTokenReviewAndPodLookup(t *testing.T) {
 	config.Kubernetes = testRuntimeKubernetesConfig(t, api.URL)
 	runtime := newTestRuntime(t, config)
 	if runtime.NodeEvidence == nil {
-		t.Fatal("runtime NodeEvidence cache is nil")
+		t.Fatal("runtime NodeEvidence store is nil")
 	}
 	putTestNodeEvidence(t, runtime.NodeEvidence, config, "node-uid", time.Now(), time.Now().Add(time.Minute))
 	client, cleanup := startPlaintextBroker(t, runtime)
+	defer cleanup()
+
+	challengeID := brokerChallenge(t, client, config, config.DevelopmentSubject, protocolv1.Operation_OPERATION_WRAP)
+	evidence, err := k8sprovider.NewEvidenceEnvelope(challengeID, "projected-token")
+	if err != nil {
+		t.Fatalf("NewEvidenceEnvelope returned error: %v", err)
+	}
+	resp, err := client.Wrap(context.Background(), &protocolv1.WrapRequest{
+		Plaintext: []byte("seal plaintext"),
+		Evidence:  evidence,
+	})
+	if err != nil {
+		t.Fatalf("Wrap returned error: %v", err)
+	}
+	if resp.GetDecision().GetState() != protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW {
+		t.Fatalf("wrap decision = %s, want allow", resp.GetDecision().GetState())
+	}
+	if calls.tokenReviews() != 1 || calls.pods() != 1 {
+		t.Fatalf("Kubernetes API calls = tokenreviews:%d pods:%d, want 1/1", calls.tokenReviews(), calls.pods())
+	}
+}
+
+func TestRuntimeKubernetesNodeEvidencePersistsAcrossRestart(t *testing.T) {
+	api, calls := startKubernetesAPIServer(t, testNodeName)
+	defer api.Close()
+	config := testConfig(t)
+	config.DevelopmentSubject = testKubernetesSubject
+	config.Kubernetes = testRuntimeKubernetesConfig(t, api.URL)
+
+	first := newTestRuntime(t, config)
+	if first.NodeEvidence == nil {
+		t.Fatal("runtime NodeEvidence store is nil")
+	}
+	putTestNodeEvidence(t, first.NodeEvidence, config, "node-uid", time.Now(), time.Now().Add(time.Minute))
+	if err := first.Close(context.Background()); err != nil {
+		t.Fatalf("first runtime Close returned error: %v", err)
+	}
+
+	second := newTestRuntime(t, config)
+	client, cleanup := startPlaintextBroker(t, second)
 	defer cleanup()
 
 	challengeID := brokerChallenge(t, client, config, config.DevelopmentSubject, protocolv1.Operation_OPERATION_WRAP)
@@ -1155,14 +1233,14 @@ func dialTLS(
 
 func putTestNodeEvidence(
 	t *testing.T,
-	cache *MemoryNodeEvidenceCache,
+	store NodeEvidenceWriter,
 	config Config,
 	nodeUID string,
 	collectedAt time.Time,
 	expiresAt time.Time,
 ) {
 	t.Helper()
-	err := cache.PutNodeEvidence(context.Background(), NodeEvidence{
+	err := store.PutNodeEvidence(context.Background(), NodeEvidence{
 		ClusterID:    config.ClusterID,
 		NodeName:     testNodeName,
 		NodeUID:      nodeUID,

@@ -22,7 +22,7 @@ type Runtime struct {
 	Audit        *FileAuditSink
 	Server       *grpc.Server
 	Tel          *Telemetry
-	NodeEvidence *MemoryNodeEvidenceCache
+	NodeEvidence NodeEvidenceStore
 }
 
 // NewRuntime initializes state, policy inputs, audit, telemetry, and gRPC services.
@@ -124,7 +124,7 @@ func ListenAndServe(ctx context.Context, config Config) error {
 }
 
 // NewGRPCServer builds a broker gRPC server.
-func NewGRPCServer(config Config, service *Service, nodeEvidence *MemoryNodeEvidenceCache) (*grpc.Server, error) {
+func NewGRPCServer(config Config, service *Service, nodeEvidence NodeEvidenceStore) (*grpc.Server, error) {
 	options, err := grpcServerOptions(config)
 	if err != nil {
 		return nil, err

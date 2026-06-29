@@ -11,7 +11,7 @@ import (
 // AdminService implements broker-local administrative APIs.
 type AdminService struct {
 	protocolv1.UnimplementedAdminServiceServer
-	nodeEvidence                 *MemoryNodeEvidenceCache
+	nodeEvidence                 NodeEvidenceStore
 	policyID                     string
 	allowFakeNodeEvidencePublish bool
 	clock                        func() time.Time
@@ -19,7 +19,7 @@ type AdminService struct {
 
 // NewAdminService creates the broker admin service.
 func NewAdminService(
-	nodeEvidence *MemoryNodeEvidenceCache,
+	nodeEvidence NodeEvidenceStore,
 	policyID string,
 	allowFakeNodeEvidencePublish bool,
 ) AdminService {
@@ -36,7 +36,7 @@ func (s AdminService) Status(context.Context, *protocolv1.AdminStatusRequest) (*
 	if s.nodeEvidence == nil {
 		return &protocolv1.AdminStatusResponse{
 			Implemented: false,
-			Message:     "admin node evidence APIs require Kubernetes node evidence cache",
+			Message:     "admin node evidence APIs require Kubernetes node evidence storage",
 		}, nil
 	}
 	return &protocolv1.AdminStatusResponse{
@@ -55,7 +55,7 @@ func (s AdminService) PublishNodeEvidence(
 			Decision: Deny(
 				s.policyID,
 				protocolv1.ErrorCode_ERROR_CODE_INTERNAL,
-				"node evidence cache is not configured",
+				"node evidence storage is not configured",
 			).Proto(),
 		}, nil
 	}
@@ -103,7 +103,7 @@ func (s AdminService) PublishNodeEvidence(
 	}, nil
 }
 
-// ListNodeEvidence returns cached node evidence records for diagnostics.
+// ListNodeEvidence returns stored node evidence records for diagnostics.
 func (s AdminService) ListNodeEvidence(
 	ctx context.Context,
 	req *protocolv1.NodeEvidenceListRequest,
@@ -113,7 +113,7 @@ func (s AdminService) ListNodeEvidence(
 			Decision: Deny(
 				s.policyID,
 				protocolv1.ErrorCode_ERROR_CODE_INTERNAL,
-				"node evidence cache is not configured",
+				"node evidence storage is not configured",
 			).Proto(),
 		}, nil
 	}

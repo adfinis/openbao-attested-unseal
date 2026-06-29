@@ -10,9 +10,9 @@ import (
 )
 
 var (
-	// ErrNodeEvidenceNotFound indicates that no node evidence is cached for a workload node.
+	// ErrNodeEvidenceNotFound indicates that no node evidence is stored for a workload node.
 	ErrNodeEvidenceNotFound = errors.New("node evidence not found")
-	// ErrNodeEvidenceStale indicates that cached node evidence is no longer fresh enough for policy.
+	// ErrNodeEvidenceStale indicates that stored node evidence is no longer fresh enough for policy.
 	ErrNodeEvidenceStale = errors.New("node evidence stale")
 	// ErrNodeEvidenceInvalid indicates that a node evidence record is incomplete or malformed.
 	ErrNodeEvidenceInvalid = errors.New("node evidence invalid")
@@ -40,6 +40,14 @@ type NodeEvidenceReader interface {
 // NodeEvidenceWriter stores node evidence collected by a node evidence publisher.
 type NodeEvidenceWriter interface {
 	PutNodeEvidence(ctx context.Context, evidence NodeEvidence) error
+}
+
+// NodeEvidenceStore stores and reads node evidence records.
+type NodeEvidenceStore interface {
+	NodeEvidenceReader
+	NodeEvidenceWriter
+	NodeEvidence(ctx context.Context, clusterID string, nodeName string) (NodeEvidence, error)
+	ListNodeEvidence(ctx context.Context, clusterID string, nodeName string) ([]NodeEvidence, error)
 }
 
 // MemoryNodeEvidenceCache is a process-local node evidence cache.

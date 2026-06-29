@@ -153,6 +153,7 @@ type RotationVerification struct {
 
 // Store persists broker state.
 type Store interface {
+	NodeEvidenceStore
 	Close() error
 	BootstrapKeyring(ctx context.Context, request BootstrapKeyringRequest) error
 	ConfigureDevelopment(ctx context.Context, config Config, key []byte) error

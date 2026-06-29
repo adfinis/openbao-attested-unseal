@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
@@ -246,6 +247,22 @@ CREATE TABLE IF NOT EXISTS audit_events (
   error_code TEXT
 );
 
+CREATE TABLE IF NOT EXISTS node_evidence (
+  cluster_id TEXT NOT NULL,
+  node_name TEXT NOT NULL,
+  node_uid TEXT,
+  provider TEXT NOT NULL,
+  evidence_hash TEXT NOT NULL,
+  collected_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (cluster_id, node_name),
+  FOREIGN KEY (cluster_id) REFERENCES clusters(cluster_id)
+);
+
+CREATE INDEX IF NOT EXISTS node_evidence_expires_at
+ON node_evidence(cluster_id, expires_at);
+
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
@@ -257,6 +274,9 @@ VALUES (3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 }
 
@@ -963,6 +983,126 @@ func (s *SQLiteStore) ConsumeChallenge(
 	return nil
 }
 
+// PutNodeEvidence stores or replaces broker-trusted node evidence.
+func (s *SQLiteStore) PutNodeEvidence(ctx context.Context, evidence NodeEvidence) error {
+	normalized, err := normalizeNodeEvidence(evidence)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(
+		ctx,
+		`INSERT INTO node_evidence(
+		   cluster_id, node_name, node_uid, provider, evidence_hash, collected_at, expires_at, updated_at
+		 )
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(cluster_id, node_name) DO UPDATE SET
+		   node_uid = excluded.node_uid,
+		   provider = excluded.provider,
+		   evidence_hash = excluded.evidence_hash,
+		   collected_at = excluded.collected_at,
+		   expires_at = excluded.expires_at,
+		   updated_at = excluded.updated_at`,
+		normalized.ClusterID,
+		normalized.NodeName,
+		nullableString(normalized.NodeUID),
+		normalized.Provider,
+		normalized.EvidenceHash,
+		normalized.CollectedAt.UTC().Format(time.RFC3339Nano),
+		normalized.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		time.Now().UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("upsert node evidence: %w", err)
+	}
+	return nil
+}
+
+// FreshNodeEvidence returns stored node evidence if it exists and has not expired.
+func (s *SQLiteStore) FreshNodeEvidence(
+	ctx context.Context,
+	clusterID string,
+	nodeName string,
+	now time.Time,
+) (NodeEvidence, error) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	evidence, err := s.NodeEvidence(ctx, clusterID, nodeName)
+	if err != nil {
+		return NodeEvidence{}, err
+	}
+	if !evidence.ExpiresAt.After(now) {
+		return evidence, ErrNodeEvidenceStale
+	}
+	return evidence, nil
+}
+
+// NodeEvidence returns stored node evidence without enforcing freshness.
+func (s *SQLiteStore) NodeEvidence(ctx context.Context, clusterID string, nodeName string) (NodeEvidence, error) {
+	clusterID = strings.TrimSpace(clusterID)
+	nodeName = strings.TrimSpace(nodeName)
+	return scanNodeEvidence(s.db.QueryRowContext(
+		ctx,
+		`SELECT cluster_id, node_name, node_uid, provider, evidence_hash, collected_at, expires_at
+		 FROM node_evidence
+		 WHERE cluster_id = ? AND node_name = ?`,
+		clusterID,
+		nodeName,
+	))
+}
+
+// ListNodeEvidence returns stored evidence for one cluster, optionally filtered by node name.
+func (s *SQLiteStore) ListNodeEvidence(
+	ctx context.Context,
+	clusterID string,
+	nodeName string,
+) ([]NodeEvidence, error) {
+	clusterID = strings.TrimSpace(clusterID)
+	nodeName = strings.TrimSpace(nodeName)
+	var rows *sql.Rows
+	var err error
+	if nodeName != "" {
+		rows, err = s.db.QueryContext(
+			ctx,
+			`SELECT cluster_id, node_name, node_uid, provider, evidence_hash, collected_at, expires_at
+			 FROM node_evidence
+			 WHERE cluster_id = ? AND node_name = ?
+			 ORDER BY node_name`,
+			clusterID,
+			nodeName,
+		)
+	} else {
+		rows, err = s.db.QueryContext(
+			ctx,
+			`SELECT cluster_id, node_name, node_uid, provider, evidence_hash, collected_at, expires_at
+			 FROM node_evidence
+			 WHERE cluster_id = ?
+			 ORDER BY node_name`,
+			clusterID,
+		)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query node evidence: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	records := make([]NodeEvidence, 0)
+	for rows.Next() {
+		evidence, err := scanNodeEvidence(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, evidence)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate node evidence: %w", err)
+	}
+	if len(records) == 0 {
+		return nil, ErrNodeEvidenceNotFound
+	}
+	return records, nil
+}
+
 // InsertAuditEvent stores an audit event in SQLite.
 func (s *SQLiteStore) InsertAuditEvent(ctx context.Context, event AuditEvent) error {
 	_, err := s.db.ExecContext(
@@ -1198,6 +1338,46 @@ func scanRotationOperation(row *sql.Row) (RotationOperation, error) {
 		}
 	}
 	return operation, nil
+}
+
+type nodeEvidenceScanner interface {
+	//nolint:forbidigo // Mirrors database/sql's Scan variadic boundary for row and rows helpers.
+	Scan(dest ...any) error
+}
+
+func scanNodeEvidence(scanner nodeEvidenceScanner) (NodeEvidence, error) {
+	var evidence NodeEvidence
+	var nodeUID sql.NullString
+	var collectedRaw string
+	var expiresRaw string
+	err := scanner.Scan(
+		&evidence.ClusterID,
+		&evidence.NodeName,
+		&nodeUID,
+		&evidence.Provider,
+		&evidence.EvidenceHash,
+		&collectedRaw,
+		&expiresRaw,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return NodeEvidence{}, ErrNodeEvidenceNotFound
+	}
+	if err != nil {
+		return NodeEvidence{}, fmt.Errorf("scan node evidence: %w", err)
+	}
+	if nodeUID.Valid {
+		evidence.NodeUID = nodeUID.String
+	}
+	var parseErr error
+	evidence.CollectedAt, parseErr = time.Parse(time.RFC3339Nano, collectedRaw)
+	if parseErr != nil {
+		return NodeEvidence{}, fmt.Errorf("parse node evidence collected_at: %w", parseErr)
+	}
+	evidence.ExpiresAt, parseErr = time.Parse(time.RFC3339Nano, expiresRaw)
+	if parseErr != nil {
+		return NodeEvidence{}, fmt.Errorf("parse node evidence expires_at: %w", parseErr)
+	}
+	return evidence, nil
 }
 
 func uint32KeyVersion(value int64) (uint32, error) {

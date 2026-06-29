@@ -15,7 +15,7 @@ import (
 
 type runtimeServiceDependencies struct {
 	Service      *Service
-	NodeEvidence *MemoryNodeEvidenceCache
+	NodeEvidence NodeEvidenceStore
 }
 
 func newRuntimeService(
@@ -39,17 +39,16 @@ func newRuntimeService(
 		audit,
 		telemetry,
 		kubernetesDeps.verifier,
-		kubernetesDeps.nodeEvidence,
+		store,
 	)
 	return runtimeServiceDependencies{
 		Service:      service,
-		NodeEvidence: kubernetesDeps.nodeEvidence,
+		NodeEvidence: store,
 	}, nil
 }
 
 type kubernetesRuntimeDependencies struct {
-	verifier     KubernetesEvidenceVerifier
-	nodeEvidence *MemoryNodeEvidenceCache
+	verifier KubernetesEvidenceVerifier
 }
 
 func newKubernetesRuntimeDependencies(config KubernetesConfig) (kubernetesRuntimeDependencies, error) {
@@ -79,8 +78,7 @@ func newKubernetesRuntimeDependencies(config KubernetesConfig) (kubernetesRuntim
 		}
 	}
 	return kubernetesRuntimeDependencies{
-		verifier:     NewKubernetesEvidenceVerifierWithPodLookup(reviewer, podLookup, config),
-		nodeEvidence: NewMemoryNodeEvidenceCache(),
+		verifier: NewKubernetesEvidenceVerifierWithPodLookup(reviewer, podLookup, config),
 	}, nil
 }
 
