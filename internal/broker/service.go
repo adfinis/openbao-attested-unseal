@@ -51,6 +51,20 @@ func NewServiceWithEvidenceVerifier(
 	return service
 }
 
+// NewServiceWithEvidenceVerifierAndNodeEvidence creates a service with verifier and node evidence dependencies.
+func NewServiceWithEvidenceVerifierAndNodeEvidence(
+	config Config,
+	store Store,
+	audit *FileAuditSink,
+	telemetry *Telemetry,
+	verifier EvidenceVerifier,
+	nodeEvidence NodeEvidenceReader,
+) *Service {
+	service := NewServiceWithEvidenceVerifier(config, store, audit, telemetry, verifier)
+	service.policy.nodeEvidence = nodeEvidence
+	return service
+}
+
 // Challenge creates a single-use broker challenge.
 func (s *Service) Challenge(
 	ctx context.Context,
@@ -122,7 +136,8 @@ func (s *Service) Wrap(
 			).Proto(),
 		}, nil
 	}
-	subject, evidenceDecision := s.evidenceSubject(ctx, req.GetEvidence())
+	verified, evidenceDecision := s.evidenceSubject(ctx, req.GetEvidence())
+	subject := verified.Subject
 	if !evidenceDecision.Allowed() {
 		s.auditDecision(
 			ctx,
@@ -159,6 +174,7 @@ func (s *Service) Wrap(
 	decision = s.evaluate(ctx, policyRequest{
 		ClusterID:   ref.ClusterID,
 		Subject:     subject,
+		Workload:    verified.Workload,
 		Operation:   protocolv1.Operation_OPERATION_WRAP,
 		ChallengeID: req.GetEvidence().GetChallengeId(),
 		KeyRef:      ref,
@@ -244,7 +260,8 @@ func (s *Service) Unwrap(
 			).Proto(),
 		}, nil
 	}
-	subject, evidenceDecision := s.evidenceSubject(ctx, req.GetEvidence())
+	verified, evidenceDecision := s.evidenceSubject(ctx, req.GetEvidence())
+	subject := verified.Subject
 	if !evidenceDecision.Allowed() {
 		s.auditDecision(
 			ctx,
@@ -274,6 +291,7 @@ func (s *Service) Unwrap(
 	decision := s.evaluate(ctx, policyRequest{
 		ClusterID:   ref.ClusterID,
 		Subject:     subject,
+		Workload:    verified.Workload,
 		Operation:   protocolv1.Operation_OPERATION_UNWRAP,
 		ChallengeID: req.GetEvidence().GetChallengeId(),
 		KeyRef:      ref,
@@ -450,20 +468,20 @@ func (s *Service) evaluate(ctx context.Context, req policyRequest) PolicyDecisio
 func (s *Service) evidenceSubject(
 	ctx context.Context,
 	evidence *protocolv1.EvidenceEnvelope,
-) (string, PolicyDecision) {
+) (VerifiedEvidence, PolicyDecision) {
 	verifier := s.verifier
 	if verifier == nil {
 		verifier = DevelopmentEvidenceVerifier{}
 	}
 	verified, err := verifier.VerifyEvidence(ctx, evidence)
 	if err != nil {
-		return "", Deny(
+		return VerifiedEvidence{}, Deny(
 			s.config.Policy(),
 			protocolv1.ErrorCode_ERROR_CODE_ATTESTATION_FAILED,
 			"attestation verification failed",
 		)
 	}
-	return verified.Subject, Allow(s.config.Policy())
+	return verified, Allow(s.config.Policy())
 }
 
 func (s *Service) auditDecision(

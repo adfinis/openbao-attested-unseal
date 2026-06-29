@@ -24,7 +24,15 @@ weight: 20
   "cluster_id": "prod-eu1",
   "key_id": "root",
   "development_wrapping_key_b64": "base64-encoded-32-byte-key",
-  "challenge_ttl_seconds": 120
+  "challenge_ttl_seconds": 120,
+  "kubernetes": {
+    "enabled": false,
+    "token_review_audience": "bao-unseald",
+    "namespace": "openbao",
+    "service_account": "openbao",
+    "node_evidence_ttl_seconds": 300,
+    "allow_unbound_service_account_tokens": false
+  }
 }
 ```
 
@@ -39,6 +47,11 @@ decision latency.
 `otel_exporter` supports `none` and `stdout` in M2. `none` keeps
 instrumentation active without installing an exporter. `stdout` emits JSON
 traces and metrics to stdout for local validation.
+
+The optional `kubernetes` block is disabled by default. When enabled, the
+broker validates the TokenReview audience, namespace, service account, and node
+evidence freshness window. Pod-bound service account tokens are required unless
+`allow_unbound_service_account_tokens` is explicitly set to `true`.
 
 The M2 policy document is intentionally narrow:
 

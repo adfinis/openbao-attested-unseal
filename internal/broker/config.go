@@ -17,6 +17,8 @@ import (
 const (
 	// DefaultChallengeTTL is used when the config omits challenge_ttl_seconds.
 	DefaultChallengeTTL = 2 * time.Minute
+	// DefaultKubernetesNodeEvidenceTTL is used when Kubernetes config omits node_evidence_ttl_seconds.
+	DefaultKubernetesNodeEvidenceTTL = 5 * time.Minute
 	// DevelopmentProfile is the only keyring profile implemented by the M2 skeleton.
 	DevelopmentProfile = "development"
 	// OTelExporterNone disables SDK exporter setup while preserving instrumentation hooks.
@@ -29,25 +31,36 @@ const (
 
 // Config describes one broker daemon instance.
 type Config struct {
-	ListenAddress             string         `json:"listen_address"`
-	TLSCertFile               string         `json:"tls_cert_file"`
-	TLSKeyFile                string         `json:"tls_key_file"`
-	ClientCAFile              string         `json:"client_ca_file"`
-	RequireClientCert         bool           `json:"require_client_cert"`
-	AllowPlaintextForTests    bool           `json:"allow_plaintext_for_tests"`
-	SQLitePath                string         `json:"sqlite_path"`
-	AuditFilePath             string         `json:"audit_file_path"`
-	AuditFsync                bool           `json:"audit_fsync"`
-	OTelExporter              string         `json:"otel_exporter"`
-	DefaultPolicyPath         string         `json:"default_policy_path"`
-	KeyringProtectionProfile  string         `json:"keyring_protection_profile"`
-	ClusterID                 string         `json:"cluster_id"`
-	KeyID                     string         `json:"key_id"`
-	PolicyID                  string         `json:"policy_id"`
-	DevelopmentSubject        string         `json:"development_subject"`
-	DevelopmentWrappingKeyB64 string         `json:"development_wrapping_key_b64"`
-	ChallengeTTLSeconds       int64          `json:"challenge_ttl_seconds"`
-	DefaultPolicy             PolicyDocument `json:"-"`
+	ListenAddress             string           `json:"listen_address"`
+	TLSCertFile               string           `json:"tls_cert_file"`
+	TLSKeyFile                string           `json:"tls_key_file"`
+	ClientCAFile              string           `json:"client_ca_file"`
+	RequireClientCert         bool             `json:"require_client_cert"`
+	AllowPlaintextForTests    bool             `json:"allow_plaintext_for_tests"`
+	SQLitePath                string           `json:"sqlite_path"`
+	AuditFilePath             string           `json:"audit_file_path"`
+	AuditFsync                bool             `json:"audit_fsync"`
+	OTelExporter              string           `json:"otel_exporter"`
+	DefaultPolicyPath         string           `json:"default_policy_path"`
+	KeyringProtectionProfile  string           `json:"keyring_protection_profile"`
+	ClusterID                 string           `json:"cluster_id"`
+	KeyID                     string           `json:"key_id"`
+	PolicyID                  string           `json:"policy_id"`
+	DevelopmentSubject        string           `json:"development_subject"`
+	DevelopmentWrappingKeyB64 string           `json:"development_wrapping_key_b64"`
+	ChallengeTTLSeconds       int64            `json:"challenge_ttl_seconds"`
+	Kubernetes                KubernetesConfig `json:"kubernetes"`
+	DefaultPolicy             PolicyDocument   `json:"-"`
+}
+
+// KubernetesConfig contains the optional Kubernetes workload verifier configuration.
+type KubernetesConfig struct {
+	Enabled                          bool   `json:"enabled"`
+	TokenReviewAudience              string `json:"token_review_audience"`
+	Namespace                        string `json:"namespace"`
+	ServiceAccount                   string `json:"service_account"`
+	NodeEvidenceTTLSeconds           int64  `json:"node_evidence_ttl_seconds"`
+	AllowUnboundServiceAccountTokens bool   `json:"allow_unbound_service_account_tokens"`
 }
 
 // PolicyDocument is the M2 default policy file format.
@@ -123,6 +136,7 @@ func (c Config) Validate() error {
 		c.validateDefaultPolicy,
 		c.validateDevelopment,
 		c.validateChallengeTTL,
+		c.validateKubernetes,
 	}
 	for _, validate := range validators {
 		if err := validate(); err != nil {
@@ -217,12 +231,54 @@ func (c Config) validateChallengeTTL() error {
 	return nil
 }
 
+func (c Config) validateKubernetes() error {
+	kubernetes := c.Kubernetes
+	if !kubernetes.Enabled {
+		if kubernetes.NodeEvidenceTTLSeconds < 0 {
+			return errors.New("kubernetes.node_evidence_ttl_seconds must not be negative")
+		}
+		return nil
+	}
+	if strings.TrimSpace(kubernetes.TokenReviewAudience) == "" {
+		return errors.New("kubernetes.token_review_audience is required when kubernetes is enabled")
+	}
+	if strings.TrimSpace(kubernetes.Namespace) == "" {
+		return errors.New("kubernetes.namespace is required when kubernetes is enabled")
+	}
+	if err := keyring.ValidateIdentifier(strings.TrimSpace(kubernetes.Namespace)); err != nil {
+		return fmt.Errorf("invalid kubernetes.namespace: %w", err)
+	}
+	if strings.TrimSpace(kubernetes.ServiceAccount) == "" {
+		return errors.New("kubernetes.service_account is required when kubernetes is enabled")
+	}
+	if err := keyring.ValidateIdentifier(strings.TrimSpace(kubernetes.ServiceAccount)); err != nil {
+		return fmt.Errorf("invalid kubernetes.service_account: %w", err)
+	}
+	if kubernetes.NodeEvidenceTTL() <= 0 {
+		return errors.New("kubernetes.node_evidence_ttl_seconds must be greater than zero")
+	}
+	return nil
+}
+
 // ChallengeTTL returns the configured challenge TTL.
 func (c Config) ChallengeTTL() time.Duration {
 	if c.ChallengeTTLSeconds == 0 {
 		return DefaultChallengeTTL
 	}
 	return time.Duration(c.ChallengeTTLSeconds) * time.Second
+}
+
+// NodeEvidenceTTL returns the configured Kubernetes node evidence freshness window.
+func (k KubernetesConfig) NodeEvidenceTTL() time.Duration {
+	if k.NodeEvidenceTTLSeconds == 0 {
+		return DefaultKubernetesNodeEvidenceTTL
+	}
+	return time.Duration(k.NodeEvidenceTTLSeconds) * time.Second
+}
+
+// RequirePodBoundToken returns whether Kubernetes evidence must include pod-bound token claims.
+func (k KubernetesConfig) RequirePodBoundToken() bool {
+	return !k.AllowUnboundServiceAccountTokens
 }
 
 // Profile returns the configured keyring protection profile.

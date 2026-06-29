@@ -69,6 +69,7 @@ func (d PolicyDecision) Allowed() bool {
 type policyRequest struct {
 	ClusterID   string
 	Subject     string
+	Workload    WorkloadIdentity
 	Operation   protocolv1.Operation
 	ChallengeID string
 	KeyRef      keyring.KeyRef
@@ -76,10 +77,11 @@ type policyRequest struct {
 
 // PolicyEngine evaluates M2 development-subject policy.
 type PolicyEngine struct {
-	store     Store
-	policyID  string
-	clock     func() time.Time
-	telemetry *Telemetry
+	store        Store
+	nodeEvidence NodeEvidenceReader
+	policyID     string
+	clock        func() time.Time
+	telemetry    *Telemetry
 }
 
 // NewPolicyEngine creates the default-deny policy engine.
@@ -104,6 +106,9 @@ func (e *PolicyEngine) evaluate(ctx context.Context, req policyRequest) PolicyDe
 			return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED, "subject is not allowed")
 		}
 		return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_INTERNAL, "subject lookup failed")
+	}
+	if decision := e.evaluateNodeEvidence(ctx, req); !decision.Allowed() {
+		return decision
 	}
 	if req.ChallengeID == "" {
 		return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, "challenge is required")
@@ -133,6 +138,35 @@ func (e *PolicyEngine) evaluate(ctx context.Context, req policyRequest) PolicyDe
 		}
 	}
 	return Allow(e.policyID)
+}
+
+func (e *PolicyEngine) evaluateNodeEvidence(ctx context.Context, req policyRequest) PolicyDecision {
+	if e.nodeEvidence == nil || req.Workload.NodeName == "" {
+		return Allow(e.policyID)
+	}
+	evidence, err := e.nodeEvidence.FreshNodeEvidence(ctx, req.ClusterID, req.Workload.NodeName, e.clock())
+	if err != nil {
+		return e.nodeEvidenceDeny(err)
+	}
+	if req.Workload.NodeUID != "" && evidence.NodeUID != "" && req.Workload.NodeUID != evidence.NodeUID {
+		return Deny(
+			e.policyID,
+			protocolv1.ErrorCode_ERROR_CODE_ATTESTATION_FAILED,
+			"node evidence does not match workload node",
+		)
+	}
+	return Allow(e.policyID)
+}
+
+func (e *PolicyEngine) nodeEvidenceDeny(err error) PolicyDecision {
+	switch {
+	case errors.Is(err, ErrNodeEvidenceNotFound):
+		return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_ATTESTATION_FAILED, "node evidence is missing")
+	case errors.Is(err, ErrNodeEvidenceStale):
+		return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_ATTESTATION_FAILED, "node evidence is stale")
+	default:
+		return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_INTERNAL, "node evidence lookup failed")
+	}
 }
 
 func (e *PolicyEngine) consumeChallenge(

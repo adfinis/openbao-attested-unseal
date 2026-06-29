@@ -8,7 +8,18 @@ import (
 
 // VerifiedEvidence is the broker-local result of provider-specific evidence verification.
 type VerifiedEvidence struct {
-	Subject string
+	Subject  string
+	Workload WorkloadIdentity
+}
+
+// WorkloadIdentity contains workload placement facts that can be correlated with node evidence.
+type WorkloadIdentity struct {
+	Namespace      string
+	ServiceAccount string
+	PodName        string
+	PodUID         string
+	NodeName       string
+	NodeUID        string
 }
 
 // EvidenceVerifier validates attestation evidence before policy evaluation.

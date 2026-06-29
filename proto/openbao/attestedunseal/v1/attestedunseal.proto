@@ -52,6 +52,14 @@ enum KeyStatus {
   KEY_STATUS_RETIRED = 4;
 }
 
+enum NodeEvidenceStatus {
+  NODE_EVIDENCE_STATUS_UNSPECIFIED = 0;
+  NODE_EVIDENCE_STATUS_FRESH = 1;
+  NODE_EVIDENCE_STATUS_STALE = 2;
+  NODE_EVIDENCE_STATUS_MISSING = 3;
+  NODE_EVIDENCE_STATUS_INVALID = 4;
+}
+
 enum ErrorCode {
   ERROR_CODE_UNSPECIFIED = 0;
   ERROR_CODE_INVALID_REQUEST = 1;
@@ -116,6 +124,31 @@ message EvidenceEnvelope {
   bytes payload = 3;
   string challenge_id = 4;
   repeated Claim normalized_claims = 5;
+}
+
+message NodeEvidenceRecord {
+  string cluster_id = 1;
+  string node_name = 2;
+  string node_uid = 3;
+  AttestationProvider provider = 4;
+  string evidence_hash = 5;
+  int64 collected_unix_seconds = 6;
+  int64 expires_unix_seconds = 7;
+  string policy_id = 8;
+  repeated Claim claims = 9;
+  NodeEvidenceStatus status = 10;
+  repeated BrokerError errors = 11;
+}
+
+message NodeEvidenceListRequest {
+  string cluster_id = 1;
+  string node_name = 2;
+  AuditContext audit = 3;
+}
+
+message NodeEvidenceListResponse {
+  repeated NodeEvidenceRecord evidence = 1;
+  PolicyDecision decision = 2;
 }
 
 message PolicyDecision {

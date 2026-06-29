@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	k8sprovider "github.com/adfinis/openbao-attested-unseal/internal/attestation/providers/kubernetes"
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	"go.opentelemetry.io/otel/attribute"
@@ -40,7 +41,7 @@ func TestSQLiteMigrationIdempotency(t *testing.T) {
 func TestChallengeExpiry(t *testing.T) {
 	config := testConfig(t)
 	store := newTestStore(t, config)
-	challenge := testChallenge(t, config, protocolv1.Operation_OPERATION_WRAP)
+	challenge := testChallenge(t, config)
 	challenge.ExpiresAt = time.Now().Add(-time.Second)
 	if err := store.CreateChallenge(context.Background(), challenge); err != nil {
 		t.Fatalf("CreateChallenge returned error: %v", err)
@@ -245,7 +246,7 @@ func TestDecryptOnlyKeyCannotWrap(t *testing.T) {
 	}
 	telemetry := newTestTelemetry(t)
 	service := NewService(config, store, NewFileAuditSink(config.AuditFilePath, false), telemetry)
-	challenge := testChallenge(t, config, protocolv1.Operation_OPERATION_WRAP)
+	challenge := testChallenge(t, config)
 	if err := store.CreateChallenge(context.Background(), challenge); err != nil {
 		t.Fatalf("CreateChallenge returned error: %v", err)
 	}
@@ -288,6 +289,132 @@ func TestEvidenceVerifierFailureDeniesWrap(t *testing.T) {
 	errs := resp.GetDecision().GetErrors()
 	if len(errs) != 1 || errs[0].GetCode() != protocolv1.ErrorCode_ERROR_CODE_ATTESTATION_FAILED {
 		t.Fatalf("errors = %v, want attestation failure", errs)
+	}
+}
+
+func TestKubernetesEvidenceVerifierAuthorizesWorkload(t *testing.T) {
+	config := testConfig(t)
+	config.DevelopmentSubject = "openbao.openbao"
+	store := newTestStore(t, config)
+	cache := NewMemoryNodeEvidenceCache()
+	putTestNodeEvidence(t, cache, config, "node-a", "node-uid", time.Now(), time.Now().Add(time.Minute))
+	telemetry, err := NewTelemetry(config)
+	if err != nil {
+		t.Fatalf("NewTelemetry returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = telemetry.Shutdown(context.Background()) })
+	service := NewServiceWithEvidenceVerifierAndNodeEvidence(
+		config,
+		store,
+		NewFileAuditSink(config.AuditFilePath, false),
+		telemetry,
+		testKubernetesEvidenceVerifier(testKubernetesTokenReviewStatus("node-a", "node-uid")),
+		cache,
+	)
+	challenge := testChallenge(t, config)
+	if err := store.CreateChallenge(context.Background(), challenge); err != nil {
+		t.Fatalf("CreateChallenge returned error: %v", err)
+	}
+	evidence, err := k8sprovider.NewEvidenceEnvelope(challenge.ID, "projected-token")
+	if err != nil {
+		t.Fatalf("NewEvidenceEnvelope returned error: %v", err)
+	}
+	resp, err := service.Wrap(context.Background(), &protocolv1.WrapRequest{
+		Plaintext: []byte("seal plaintext"),
+		Evidence:  evidence,
+	})
+	if err != nil {
+		t.Fatalf("Wrap returned error: %v", err)
+	}
+	if resp.GetDecision().GetState() != protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW {
+		t.Fatalf("wrap decision = %s, want allow", resp.GetDecision().GetState())
+	}
+	if !hasAuditDecision(
+		readAuditEvents(t, config.AuditFilePath),
+		protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW,
+	) {
+		t.Fatal("audit file does not contain an allow decision")
+	}
+}
+
+func TestKubernetesWorkloadNodeEvidencePolicyDenials(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name           string
+		configureCache func(t *testing.T, cache *MemoryNodeEvidenceCache, config Config)
+		wantReason     string
+	}{
+		{
+			name:       "missing",
+			wantReason: "node evidence is missing",
+		},
+		{
+			name: "stale",
+			configureCache: func(t *testing.T, cache *MemoryNodeEvidenceCache, config Config) {
+				t.Helper()
+				putTestNodeEvidence(
+					t,
+					cache,
+					config,
+					"node-a",
+					"node-uid",
+					now.Add(-2*time.Minute),
+					now.Add(-time.Minute),
+				)
+			},
+			wantReason: "node evidence is stale",
+		},
+		{
+			name: "uid-mismatch",
+			configureCache: func(t *testing.T, cache *MemoryNodeEvidenceCache, config Config) {
+				t.Helper()
+				putTestNodeEvidence(t, cache, config, "node-a", "other-node-uid", now, now.Add(time.Minute))
+			},
+			wantReason: "node evidence does not match workload node",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := testConfig(t)
+			config.DevelopmentSubject = "openbao.openbao"
+			store := newTestStore(t, config)
+			cache := NewMemoryNodeEvidenceCache()
+			if tt.configureCache != nil {
+				tt.configureCache(t, cache, config)
+			}
+			service := NewServiceWithEvidenceVerifierAndNodeEvidence(
+				config,
+				store,
+				NewFileAuditSink(config.AuditFilePath, false),
+				newTestTelemetry(t),
+				testKubernetesEvidenceVerifier(testKubernetesTokenReviewStatus("node-a", "node-uid")),
+				cache,
+			)
+			challenge := testChallenge(t, config)
+			if err := store.CreateChallenge(context.Background(), challenge); err != nil {
+				t.Fatalf("CreateChallenge returned error: %v", err)
+			}
+			evidence, err := k8sprovider.NewEvidenceEnvelope(challenge.ID, "projected-token")
+			if err != nil {
+				t.Fatalf("NewEvidenceEnvelope returned error: %v", err)
+			}
+
+			resp, err := service.Wrap(context.Background(), &protocolv1.WrapRequest{
+				Plaintext: []byte("seal plaintext"),
+				Evidence:  evidence,
+			})
+			if err != nil {
+				t.Fatalf("Wrap returned error: %v", err)
+			}
+			assertDecisionError(
+				t,
+				resp.GetDecision(),
+				protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_DENY,
+				protocolv1.ErrorCode_ERROR_CODE_ATTESTATION_FAILED,
+				tt.wantReason,
+			)
+		})
 	}
 }
 
@@ -568,7 +695,7 @@ func startRuntimeOnListener(t *testing.T, runtime *Runtime) net.Listener {
 	return listener
 }
 
-func testChallenge(t *testing.T, config Config, operation protocolv1.Operation) Challenge {
+func testChallenge(t *testing.T, config Config) Challenge {
 	t.Helper()
 	id, err := randomID("chal")
 	if err != nil {
@@ -584,7 +711,7 @@ func testChallenge(t *testing.T, config Config, operation protocolv1.Operation) 
 		Nonce:     nonce,
 		ClusterID: config.ClusterID,
 		Subject:   config.DevelopmentSubject,
-		Operation: operation,
+		Operation: protocolv1.Operation_OPERATION_WRAP,
 		ExpiresAt: now.Add(config.ChallengeTTL()),
 		CreatedAt: now,
 	}
@@ -665,6 +792,26 @@ func hasAuditDecision(events []AuditEvent, decision protocolv1.PolicyDecisionSta
 		}
 	}
 	return false
+}
+
+func assertDecisionError(
+	t *testing.T,
+	decision *protocolv1.PolicyDecision,
+	state protocolv1.PolicyDecisionState,
+	code protocolv1.ErrorCode,
+	reason string,
+) {
+	t.Helper()
+	if decision.GetState() != state {
+		t.Fatalf("decision = %s, want %s", decision.GetState(), state)
+	}
+	errs := decision.GetErrors()
+	if len(errs) != 1 {
+		t.Fatalf("decision errors = %v, want one error", errs)
+	}
+	if errs[0].GetCode() != code || errs[0].GetMessage() != reason {
+		t.Fatalf("decision error = (%s, %q), want (%s, %q)", errs[0].GetCode(), errs[0].GetMessage(), code, reason)
+	}
 }
 
 func attributesString(attrs []attribute.KeyValue) string {
@@ -817,6 +964,54 @@ func dialTLS(
 	return conn
 }
 
+func putTestNodeEvidence(
+	t *testing.T,
+	cache *MemoryNodeEvidenceCache,
+	config Config,
+	nodeName string,
+	nodeUID string,
+	collectedAt time.Time,
+	expiresAt time.Time,
+) {
+	t.Helper()
+	err := cache.PutNodeEvidence(context.Background(), NodeEvidence{
+		ClusterID:    config.ClusterID,
+		NodeName:     nodeName,
+		NodeUID:      nodeUID,
+		Provider:     "generic-tpm2-quote",
+		EvidenceHash: "test-node-evidence-hash",
+		CollectedAt:  collectedAt,
+		ExpiresAt:    expiresAt,
+	})
+	if err != nil {
+		t.Fatalf("PutNodeEvidence returned error: %v", err)
+	}
+}
+
+func testKubernetesEvidenceVerifier(status k8sprovider.TokenReviewStatus) KubernetesEvidenceVerifier {
+	return NewKubernetesEvidenceVerifier(staticKubernetesReviewer{status: status}, KubernetesConfig{
+		TokenReviewAudience: "bao-unseald",
+		Namespace:           "openbao",
+		ServiceAccount:      "openbao",
+	})
+}
+
+func testKubernetesTokenReviewStatus(nodeName string, nodeUID string) k8sprovider.TokenReviewStatus {
+	return k8sprovider.TokenReviewStatus{
+		Authenticated: true,
+		User: k8sprovider.UserInfo{
+			Username: "system:serviceaccount:openbao:openbao",
+			Extra: map[string][]string{
+				"authentication.kubernetes.io/pod-name":  {"openbao-0"},
+				"authentication.kubernetes.io/pod-uid":   {"pod-uid"},
+				"authentication.kubernetes.io/node-name": {nodeName},
+				"authentication.kubernetes.io/node-uid":  {nodeUID},
+			},
+		},
+		Audiences: []string{"bao-unseald"},
+	}
+}
+
 type failingEvidenceVerifier struct{}
 
 func (failingEvidenceVerifier) VerifyEvidence(
@@ -824,4 +1019,15 @@ func (failingEvidenceVerifier) VerifyEvidence(
 	*protocolv1.EvidenceEnvelope,
 ) (VerifiedEvidence, error) {
 	return VerifiedEvidence{}, errors.New("test verifier failure")
+}
+
+type staticKubernetesReviewer struct {
+	status k8sprovider.TokenReviewStatus
+}
+
+func (r staticKubernetesReviewer) ReviewToken(
+	context.Context,
+	k8sprovider.TokenReviewRequest,
+) (k8sprovider.TokenReviewStatus, error) {
+	return r.status, nil
 }
