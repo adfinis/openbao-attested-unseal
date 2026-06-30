@@ -63,6 +63,89 @@ func TestAdminServiceReportsStaleNodeEvidence(t *testing.T) {
 	}
 }
 
+func TestAdminServiceAuditsNodeEvidencePublishAndList(t *testing.T) {
+	config := testConfig(t)
+	store := newTestStore(t, config)
+	now := time.Unix(1_800_000_000, 0).UTC()
+	service := newAdminService(
+		store,
+		config.Policy(),
+		true,
+		store,
+		NewFileAuditSink(config.AuditFilePath, false),
+	)
+	service.clock = func() time.Time { return now }
+
+	missing, err := service.ListNodeEvidence(context.Background(), &protocolv1.NodeEvidenceListRequest{
+		ClusterId: config.ClusterID,
+		NodeName:  testNodeName,
+	})
+	if err != nil {
+		t.Fatalf("missing ListNodeEvidence returned error: %v", err)
+	}
+	if missing.GetDecision().GetState() != protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_DENY {
+		t.Fatalf("missing list decision = %s, want deny", missing.GetDecision().GetState())
+	}
+
+	publish, err := service.PublishNodeEvidence(context.Background(), &protocolv1.NodeEvidencePublishRequest{
+		Evidence: testNodeEvidenceRecord(now, now.Add(time.Minute)),
+	})
+	if err != nil {
+		t.Fatalf("PublishNodeEvidence returned error: %v", err)
+	}
+	if publish.GetDecision().GetState() != protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW {
+		t.Fatalf("publish decision = %s, want allow", publish.GetDecision().GetState())
+	}
+	list, err := service.ListNodeEvidence(context.Background(), &protocolv1.NodeEvidenceListRequest{
+		ClusterId: config.ClusterID,
+		NodeName:  testNodeName,
+	})
+	if err != nil {
+		t.Fatalf("ListNodeEvidence returned error: %v", err)
+	}
+	if list.GetDecision().GetState() != protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW {
+		t.Fatalf("list decision = %s, want allow", list.GetDecision().GetState())
+	}
+
+	stored, err := store.AuditEvents(context.Background())
+	if err != nil {
+		t.Fatalf("AuditEvents returned error: %v", err)
+	}
+	assertNodeEvidenceAuditEvent(
+		t,
+		stored,
+		adminOperationNodeEvidenceList,
+		protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_DENY,
+		"",
+	)
+	assertNodeEvidenceAuditEvent(
+		t,
+		stored,
+		adminOperationNodeEvidencePublish,
+		protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW,
+		"test-node-evidence-hash",
+	)
+	assertNodeEvidenceAuditEvent(
+		t,
+		stored,
+		adminOperationNodeEvidenceList,
+		protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW,
+		"",
+	)
+
+	fileEvents := readAuditEvents(t, config.AuditFilePath)
+	if len(fileEvents) != len(stored) {
+		t.Fatalf("file audit events = %d, stored audit events = %d", len(fileEvents), len(stored))
+	}
+	assertNodeEvidenceAuditEvent(
+		t,
+		fileEvents,
+		adminOperationNodeEvidencePublish,
+		protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW,
+		"test-node-evidence-hash",
+	)
+}
+
 func TestAdminServiceRejectsInvalidNodeEvidence(t *testing.T) {
 	service := NewAdminService(NewMemoryNodeEvidenceCache(), "development", true)
 	tests := map[string]*protocolv1.NodeEvidencePublishRequest{
@@ -108,6 +191,32 @@ func TestAdminServiceRejectsFakePublishWhenDisabled(t *testing.T) {
 	if got := resp.GetDecision().GetErrors()[0].GetCode(); got != protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED {
 		t.Fatalf("publish error code = %s, want permission denied", got)
 	}
+}
+
+func assertNodeEvidenceAuditEvent(
+	t *testing.T,
+	events []AuditEvent,
+	operation string,
+	decision protocolv1.PolicyDecisionState,
+	evidenceHash string,
+) {
+	t.Helper()
+	for _, event := range events {
+		if event.Operation != operation || event.Decision != decision.String() {
+			continue
+		}
+		if event.ClusterID != "prod-eu1" || event.PolicyID != "development" {
+			t.Fatalf("audit event = %#v, want prod-eu1 development", event)
+		}
+		if event.Subject != "" && event.Subject != testNodeName {
+			t.Fatalf("audit subject = %q, want empty or %s", event.Subject, testNodeName)
+		}
+		if evidenceHash != "" && event.EvidenceHash != evidenceHash {
+			t.Fatalf("audit evidence hash = %q, want %s", event.EvidenceHash, evidenceHash)
+		}
+		return
+	}
+	t.Fatalf("missing audit event operation=%s decision=%s in %#v", operation, decision, events)
 }
 
 func testNodeEvidenceRecord(collectedAt time.Time, expiresAt time.Time) *protocolv1.NodeEvidenceRecord {

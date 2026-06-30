@@ -133,9 +133,23 @@ func NewGRPCServer(config Config, service *Service, nodeEvidence NodeEvidenceSto
 	protocolv1.RegisterUnsealServiceServer(server, service)
 	protocolv1.RegisterEnrollmentServiceServer(server, EnrollmentStub{})
 	protocolv1.RegisterRecoveryServiceServer(server, RecoveryStub{})
+	var auditStore adminAuditStore
+	var audit *FileAuditSink
+	if service != nil {
+		if service.store != nil {
+			auditStore = service.store
+		}
+		audit = service.audit
+	}
 	protocolv1.RegisterAdminServiceServer(
 		server,
-		NewAdminService(nodeEvidence, config.Policy(), config.Kubernetes.AllowFakeNodeEvidencePublish),
+		newAdminService(
+			nodeEvidence,
+			config.Policy(),
+			config.Kubernetes.AllowFakeNodeEvidencePublish,
+			auditStore,
+			audit,
+		),
 	)
 	return server, nil
 }

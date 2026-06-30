@@ -8,10 +8,21 @@ import (
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 )
 
+const (
+	adminOperationNodeEvidenceList    = "NODE_EVIDENCE_LIST"
+	adminOperationNodeEvidencePublish = "NODE_EVIDENCE_PUBLISH"
+)
+
+type adminAuditStore interface {
+	InsertAuditEvent(ctx context.Context, event AuditEvent) error
+}
+
 // AdminService implements broker-local administrative APIs.
 type AdminService struct {
 	protocolv1.UnimplementedAdminServiceServer
 	nodeEvidence                 NodeEvidenceStore
+	auditStore                   adminAuditStore
+	audit                        *FileAuditSink
 	policyID                     string
 	allowFakeNodeEvidencePublish bool
 	clock                        func() time.Time
@@ -23,8 +34,20 @@ func NewAdminService(
 	policyID string,
 	allowFakeNodeEvidencePublish bool,
 ) AdminService {
+	return newAdminService(nodeEvidence, policyID, allowFakeNodeEvidencePublish, nil, nil)
+}
+
+func newAdminService(
+	nodeEvidence NodeEvidenceStore,
+	policyID string,
+	allowFakeNodeEvidencePublish bool,
+	auditStore adminAuditStore,
+	audit *FileAuditSink,
+) AdminService {
 	return AdminService{
 		nodeEvidence:                 nodeEvidence,
+		auditStore:                   auditStore,
+		audit:                        audit,
 		policyID:                     policyID,
 		allowFakeNodeEvidencePublish: allowFakeNodeEvidencePublish,
 		clock:                        time.Now,
@@ -51,55 +74,107 @@ func (s AdminService) PublishNodeEvidence(
 	req *protocolv1.NodeEvidencePublishRequest,
 ) (*protocolv1.NodeEvidencePublishResponse, error) {
 	if s.nodeEvidence == nil {
+		decision := Deny(
+			s.policyID,
+			protocolv1.ErrorCode_ERROR_CODE_INTERNAL,
+			"node evidence storage is not configured",
+		)
+		s.auditNodeEvidence(ctx, adminOperationNodeEvidencePublish, "", "", "", decision)
 		return &protocolv1.NodeEvidencePublishResponse{
-			Decision: Deny(
-				s.policyID,
-				protocolv1.ErrorCode_ERROR_CODE_INTERNAL,
-				"node evidence storage is not configured",
-			).Proto(),
+			Decision: decision.Proto(),
 		}, nil
 	}
 	if req == nil {
+		decision := Deny(
+			s.policyID,
+			protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
+			"node evidence request is required",
+		)
+		s.auditNodeEvidence(ctx, adminOperationNodeEvidencePublish, "", "", "", decision)
 		return &protocolv1.NodeEvidencePublishResponse{
-			Decision: Deny(
-				s.policyID,
-				protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
-				"node evidence request is required",
-			).Proto(),
+			Decision: decision.Proto(),
 		}, nil
 	}
 	if !s.allowFakeNodeEvidencePublish {
+		record := req.GetEvidence()
+		decision := Deny(
+			s.policyID,
+			protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED,
+			"fake node evidence publish is disabled",
+		)
+		s.auditNodeEvidence(
+			ctx,
+			adminOperationNodeEvidencePublish,
+			record.GetClusterId(),
+			record.GetNodeName(),
+			record.GetEvidenceHash(),
+			decision,
+		)
 		return &protocolv1.NodeEvidencePublishResponse{
-			Decision: Deny(
-				s.policyID,
-				protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED,
-				"fake node evidence publish is disabled",
-			).Proto(),
+			Decision: decision.Proto(),
 		}, nil
 	}
 	if providerID := nodeEvidenceProviderID(req.GetEvidence()); providerID != NodeEvidenceProviderFakeLocal {
+		record := req.GetEvidence()
+		decision := Deny(
+			s.policyID,
+			protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
+			"only fake-local node evidence can be published through this beta admin API",
+		)
+		s.auditNodeEvidence(
+			ctx,
+			adminOperationNodeEvidencePublish,
+			record.GetClusterId(),
+			record.GetNodeName(),
+			record.GetEvidenceHash(),
+			decision,
+		)
 		return &protocolv1.NodeEvidencePublishResponse{
-			Decision: Deny(
-				s.policyID,
-				protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
-				"only fake-local node evidence can be published through this beta admin API",
-			).Proto(),
+			Decision: decision.Proto(),
 		}, nil
 	}
 	evidence, err := nodeEvidenceFromProto(req.GetEvidence())
 	if err != nil {
+		record := req.GetEvidence()
+		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, err.Error())
+		s.auditNodeEvidence(
+			ctx,
+			adminOperationNodeEvidencePublish,
+			record.GetClusterId(),
+			record.GetNodeName(),
+			record.GetEvidenceHash(),
+			decision,
+		)
 		return &protocolv1.NodeEvidencePublishResponse{
-			Decision: Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, err.Error()).Proto(),
+			Decision: decision.Proto(),
 		}, nil
 	}
 	if err := s.nodeEvidence.PutNodeEvidence(ctx, evidence); err != nil {
+		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, err.Error())
+		s.auditNodeEvidence(
+			ctx,
+			adminOperationNodeEvidencePublish,
+			evidence.ClusterID,
+			evidence.NodeName,
+			evidence.EvidenceHash,
+			decision,
+		)
 		return &protocolv1.NodeEvidencePublishResponse{
-			Decision: Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, err.Error()).Proto(),
+			Decision: decision.Proto(),
 		}, nil
 	}
+	decision := Allow(s.policyID)
+	s.auditNodeEvidence(
+		ctx,
+		adminOperationNodeEvidencePublish,
+		evidence.ClusterID,
+		evidence.NodeName,
+		evidence.EvidenceHash,
+		decision,
+	)
 	return &protocolv1.NodeEvidencePublishResponse{
 		Evidence: nodeEvidenceToProto(evidence, s.now()),
-		Decision: Allow(s.policyID).Proto(),
+		Decision: decision.Proto(),
 	}, nil
 }
 
@@ -109,28 +184,36 @@ func (s AdminService) ListNodeEvidence(
 	req *protocolv1.NodeEvidenceListRequest,
 ) (*protocolv1.NodeEvidenceListResponse, error) {
 	if s.nodeEvidence == nil {
+		decision := Deny(
+			s.policyID,
+			protocolv1.ErrorCode_ERROR_CODE_INTERNAL,
+			"node evidence storage is not configured",
+		)
+		s.auditNodeEvidence(ctx, adminOperationNodeEvidenceList, "", "", "", decision)
 		return &protocolv1.NodeEvidenceListResponse{
-			Decision: Deny(
-				s.policyID,
-				protocolv1.ErrorCode_ERROR_CODE_INTERNAL,
-				"node evidence storage is not configured",
-			).Proto(),
+			Decision: decision.Proto(),
 		}, nil
 	}
 	if req == nil || req.GetClusterId() == "" {
+		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, "cluster_id is required")
+		s.auditNodeEvidence(ctx, adminOperationNodeEvidenceList, "", "", "", decision)
 		return &protocolv1.NodeEvidenceListResponse{
-			Decision: Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, "cluster_id is required").Proto(),
+			Decision: decision.Proto(),
 		}, nil
 	}
 	records, err := s.nodeEvidence.ListNodeEvidence(ctx, req.GetClusterId(), req.GetNodeName())
 	if err != nil {
 		if errors.Is(err, ErrNodeEvidenceNotFound) {
+			decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_ATTESTATION_FAILED, "node evidence is missing")
+			s.auditNodeEvidence(ctx, adminOperationNodeEvidenceList, req.GetClusterId(), req.GetNodeName(), "", decision)
 			return &protocolv1.NodeEvidenceListResponse{
-				Decision: Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_ATTESTATION_FAILED, "node evidence is missing").Proto(),
+				Decision: decision.Proto(),
 			}, nil
 		}
+		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INTERNAL, "node evidence lookup failed")
+		s.auditNodeEvidence(ctx, adminOperationNodeEvidenceList, req.GetClusterId(), req.GetNodeName(), "", decision)
 		return &protocolv1.NodeEvidenceListResponse{
-			Decision: Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INTERNAL, "node evidence lookup failed").Proto(),
+			Decision: decision.Proto(),
 		}, nil
 	}
 	out := make([]*protocolv1.NodeEvidenceRecord, 0, len(records))
@@ -138,9 +221,11 @@ func (s AdminService) ListNodeEvidence(
 	for _, evidence := range records {
 		out = append(out, nodeEvidenceToProto(evidence, now))
 	}
+	decision := Allow(s.policyID)
+	s.auditNodeEvidence(ctx, adminOperationNodeEvidenceList, req.GetClusterId(), req.GetNodeName(), "", decision)
 	return &protocolv1.NodeEvidenceListResponse{
 		Evidence: out,
-		Decision: Allow(s.policyID).Proto(),
+		Decision: decision.Proto(),
 	}, nil
 }
 
@@ -149,6 +234,57 @@ func (s AdminService) now() time.Time {
 		return time.Now()
 	}
 	return s.clock()
+}
+
+func (s AdminService) auditNodeEvidence(
+	ctx context.Context,
+	operation string,
+	clusterID string,
+	nodeName string,
+	evidenceHash string,
+	decision PolicyDecision,
+) {
+	if s.auditStore == nil && (s.audit == nil || s.audit.path == "") {
+		return
+	}
+	event, err := s.newNodeEvidenceAuditEvent(ctx, operation, clusterID, nodeName, evidenceHash, decision)
+	if err != nil {
+		return
+	}
+	if s.auditStore != nil {
+		_ = s.auditStore.InsertAuditEvent(ctx, event)
+	}
+	if s.audit != nil && s.audit.path != "" {
+		_ = s.audit.Write(ctx, event)
+	}
+}
+
+func (s AdminService) newNodeEvidenceAuditEvent(
+	ctx context.Context,
+	operation string,
+	clusterID string,
+	nodeName string,
+	evidenceHash string,
+	decision PolicyDecision,
+) (AuditEvent, error) {
+	auditID, err := randomID("audit")
+	if err != nil {
+		return AuditEvent{}, err
+	}
+	return AuditEvent{
+		SchemaVersion: 1,
+		AuditID:       auditID,
+		Time:          s.now().UTC().Format(time.RFC3339Nano),
+		Subject:       nodeName,
+		Operation:     operation,
+		ClusterID:     clusterID,
+		Decision:      decision.State.String(),
+		PolicyID:      decision.PolicyID,
+		Reason:        decision.Reason,
+		EvidenceHash:  evidenceHash,
+		RemoteAddress: remoteAddress(ctx),
+		ErrorCode:     auditErrorCode(decision),
+	}, nil
 }
 
 func nodeEvidenceFromProto(record *protocolv1.NodeEvidenceRecord) (NodeEvidence, error) {

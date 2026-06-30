@@ -87,10 +87,6 @@ func newAuditEvent(
 	if err != nil {
 		return AuditEvent{}, err
 	}
-	errorCode := ""
-	if decision.ErrorCode != protocolv1.ErrorCode_ERROR_CODE_UNSPECIFIED {
-		errorCode = decision.ErrorCode.String()
-	}
 	return AuditEvent{
 		SchemaVersion: 1,
 		AuditID:       auditID,
@@ -105,8 +101,15 @@ func newAuditEvent(
 		Reason:        decision.Reason,
 		EvidenceHash:  evidenceHash(evidence),
 		RemoteAddress: remoteAddress,
-		ErrorCode:     errorCode,
+		ErrorCode:     auditErrorCode(decision),
 	}, nil
+}
+
+func auditErrorCode(decision PolicyDecision) string {
+	if decision.ErrorCode == protocolv1.ErrorCode_ERROR_CODE_UNSPECIFIED {
+		return ""
+	}
+	return decision.ErrorCode.String()
 }
 
 type keyRefView struct {
