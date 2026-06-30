@@ -119,6 +119,10 @@ The broker policy uses these node evidence fields:
 | `collected_at` | Evidence freshness start time. |
 | `expires_at` | Evidence freshness end time. |
 
+Diagnostics and audit records retain metadata and evidence hashes, but they do
+not echo submitted raw claim lists, broker error payloads, policy fields, or
+future raw evidence bodies.
+
 For the current fake/local path, the provider is `fake-local` and the evidence
 hash is only a deterministic fixture value. A production provider must define
 what is hashed, which trust root verifies it, and which claim strength it
@@ -168,7 +172,9 @@ Current tests cover:
 - policy allow, stale evidence denial, and node UID mismatch using
   fake/local node evidence fixtures;
 - broker admin publish/list APIs and `bao-unsealctl k8s publish-node` for
-  synthetic local node evidence.
+  synthetic local node evidence;
+- broker admin evidence diagnostics and `bao-unsealctl k8s check -token-file`
+  for sanitized workload-token and node-evidence policy results.
 
 ## Unsupported Claims
 

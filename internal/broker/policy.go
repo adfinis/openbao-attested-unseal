@@ -95,19 +95,7 @@ func NewPolicyEngine(store Store, policyID string, telemetry *Telemetry) *Policy
 }
 
 func (e *PolicyEngine) evaluate(ctx context.Context, req policyRequest) PolicyDecision {
-	if req.Subject == "" {
-		return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_UNAUTHENTICATED, "subject evidence is required")
-	}
-	if _, err := e.store.Subject(ctx, req.ClusterID, req.Subject); err != nil {
-		if errors.Is(err, ErrSubjectRevoked) {
-			return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED, "subject is revoked")
-		}
-		if errors.Is(err, ErrSubjectNotFound) {
-			return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED, "subject is not allowed")
-		}
-		return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_INTERNAL, "subject lookup failed")
-	}
-	if decision := e.evaluateNodeEvidence(ctx, req); !decision.Allowed() {
+	if decision := e.evaluateSubjectAndNodeEvidence(ctx, req); !decision.Allowed() {
 		return decision
 	}
 	if req.ChallengeID == "" {
@@ -136,6 +124,25 @@ func (e *PolicyEngine) evaluate(ctx context.Context, req policyRequest) PolicyDe
 		default:
 			return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_KEY_NOT_USABLE, "unwrap requires active or decrypt-only key")
 		}
+	}
+	return Allow(e.policyID)
+}
+
+func (e *PolicyEngine) evaluateSubjectAndNodeEvidence(ctx context.Context, req policyRequest) PolicyDecision {
+	if req.Subject == "" {
+		return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_UNAUTHENTICATED, "subject evidence is required")
+	}
+	if _, err := e.store.Subject(ctx, req.ClusterID, req.Subject); err != nil {
+		if errors.Is(err, ErrSubjectRevoked) {
+			return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED, "subject is revoked")
+		}
+		if errors.Is(err, ErrSubjectNotFound) {
+			return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED, "subject is not allowed")
+		}
+		return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_INTERNAL, "subject lookup failed")
+	}
+	if decision := e.evaluateNodeEvidence(ctx, req); !decision.Allowed() {
+		return decision
 	}
 	return Allow(e.policyID)
 }

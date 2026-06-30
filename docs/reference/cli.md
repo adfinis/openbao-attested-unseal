@@ -34,6 +34,8 @@ bao-unsealctl recover finish -session recovery.json.session
 
 bao-unsealctl k8s publish-node -addr 127.0.0.1:8443 -plaintext \
   -cluster-id prod-eu1 -node-name kind-worker
+bao-unsealctl k8s check -addr 127.0.0.1:8443 -plaintext \
+  -cluster-id prod-eu1 -node-name kind-worker -token-file token.jwt
 
 bao-unsealctl tpm provision -state-path /var/lib/openbao-attested-unseal \
   -package recovery.json -shares-file shares.json
@@ -46,3 +48,7 @@ Use `--format json` on lifecycle commands for automation.
 node evidence to a broker admin API so kind and local tests can exercise node
 evidence policy before a production node attestation agent exists. Use TLS by
 default; `-plaintext` is only for local test brokers.
+
+`k8s check` verifies broker admin reachability and node evidence freshness. With
+`-token-file`, it also asks the broker to evaluate Kubernetes workload evidence
+for diagnostics without invoking wrap or unwrap.

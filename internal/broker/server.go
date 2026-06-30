@@ -143,16 +143,32 @@ func NewGRPCServer(config Config, service *Service, nodeEvidence NodeEvidenceSto
 	}
 	protocolv1.RegisterAdminServiceServer(
 		server,
-		newAdminService(
-			nodeEvidence,
-			config.Policy(),
-			config.Kubernetes.AllowFakeNodeEvidencePublish,
-			config.Kubernetes.NodeEvidenceRetention(),
-			auditStore,
-			audit,
-		),
+		newAdminService(adminServiceConfig{
+			nodeEvidence:                 nodeEvidence,
+			policyID:                     config.Policy(),
+			allowFakeNodeEvidencePublish: config.Kubernetes.AllowFakeNodeEvidencePublish,
+			nodeEvidenceRetention:        config.Kubernetes.NodeEvidenceRetention(),
+			auditStore:                   auditStore,
+			audit:                        audit,
+			store:                        serviceStore(service),
+			verifier:                     serviceVerifier(service),
+		}),
 	)
 	return server, nil
+}
+
+func serviceStore(service *Service) Store {
+	if service == nil {
+		return nil
+	}
+	return service.store
+}
+
+func serviceVerifier(service *Service) EvidenceVerifier {
+	if service == nil {
+		return nil
+	}
+	return service.verifier
 }
 
 func grpcServerOptions(config Config) ([]grpc.ServerOption, error) {

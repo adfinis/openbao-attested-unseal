@@ -412,7 +412,7 @@ func TestKubernetesEvidenceVerifierAuthorizesWorkload(t *testing.T) {
 		store,
 		NewFileAuditSink(config.AuditFilePath, false),
 		telemetry,
-		testKubernetesEvidenceVerifier(testKubernetesTokenReviewStatus(testNodeName, "node-uid")),
+		testKubernetesEvidenceVerifier(testKubernetesTokenReviewStatus()),
 		cache,
 	)
 	challenge := testChallenge(t, config)
@@ -599,7 +599,7 @@ func TestKubernetesWorkloadNodeEvidencePolicyDenials(t *testing.T) {
 				store,
 				NewFileAuditSink(config.AuditFilePath, false),
 				newTestTelemetry(t),
-				testKubernetesEvidenceVerifier(testKubernetesTokenReviewStatus(testNodeName, "node-uid")),
+				testKubernetesEvidenceVerifier(testKubernetesTokenReviewStatus()),
 				cache,
 			)
 			challenge := testChallenge(t, config)
@@ -1320,7 +1320,7 @@ func testKubernetesEvidenceVerifier(status k8sprovider.TokenReviewStatus) Kubern
 	})
 }
 
-func testKubernetesTokenReviewStatus(nodeName string, nodeUID string) k8sprovider.TokenReviewStatus {
+func testKubernetesTokenReviewStatus() k8sprovider.TokenReviewStatus {
 	return k8sprovider.TokenReviewStatus{
 		Authenticated: true,
 		User: k8sprovider.UserInfo{
@@ -1328,8 +1328,8 @@ func testKubernetesTokenReviewStatus(nodeName string, nodeUID string) k8sprovide
 			Extra: map[string][]string{
 				"authentication.kubernetes.io/pod-name":  {"openbao-0"},
 				"authentication.kubernetes.io/pod-uid":   {"pod-uid"},
-				"authentication.kubernetes.io/node-name": {nodeName},
-				"authentication.kubernetes.io/node-uid":  {nodeUID},
+				"authentication.kubernetes.io/node-name": {testNodeName},
+				"authentication.kubernetes.io/node-uid":  {"node-uid"},
 			},
 		},
 		Audiences: []string{"bao-unseald"},

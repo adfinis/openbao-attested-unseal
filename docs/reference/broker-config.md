@@ -56,6 +56,11 @@ operations prune it. Pod-bound service account tokens are required unless
 `allow_unbound_service_account_tokens` is explicitly set to `true`. With
 pod-bound tokens, the broker also performs an independent Pod API lookup and
 rejects evidence if the token pod UID or node name does not match the live Pod.
+Node evidence and workload evidence diagnostics return only operator metadata:
+cluster, node name, optional node UID, provider, evidence hash, timestamps,
+status, verified subject, and sanitized workload placement. They do not echo
+submitted workload tokens, raw evidence payloads, raw claims, broker error
+payloads, policy fields, or future raw evidence bodies.
 
 `allow_fake_node_evidence_publish` enables the temporary `fake-local` admin
 publish path used by kind and local labs. Leave it disabled outside test

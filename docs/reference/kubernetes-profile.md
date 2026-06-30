@@ -2,7 +2,7 @@
 
 Status: draft
 
-Last reviewed: 2026-06-29
+Last reviewed: 2026-06-30
 
 These examples show the current Kubernetes runtime profile contract for
 `bao-unseald`. They are intentionally beta examples, not production deployment
@@ -129,6 +129,11 @@ The current fake/local node evidence fixture shape is:
 TPM identity, Secure Boot, measured boot, confidential launch, or platform
 anti-cloning.
 
+Broker diagnostics expose only node evidence metadata: cluster, node name,
+optional node UID, provider, evidence hash, timestamps, and freshness status.
+They do not return submitted raw claim lists, broker error payloads, policy
+fields, or future raw evidence bodies.
+
 For local broker tests, publish synthetic node evidence through the broker
 admin API:
 
@@ -140,10 +145,40 @@ bao-unsealctl k8s publish-node \
   -node-name kind-worker
 ```
 
-The current admin publish path writes to the broker's process-local node
-evidence cache and requires `allow_fake_node_evidence_publish = true` in the
-broker Kubernetes config. Evidence is lost when the broker restarts and is not
-a durable diagnostic API.
+The current admin publish path writes to the broker node evidence store and
+requires `allow_fake_node_evidence_publish = true` in the broker Kubernetes
+config. In normal broker runtime this store is SQLite-backed; in unit tests it
+can be an in-memory cache.
+
+Use `bao-unsealctl k8s check` to classify broker-side node evidence state for
+one node:
+
+```sh
+bao-unsealctl k8s check \
+  -addr 127.0.0.1:8443 \
+  -plaintext \
+  -cluster-id prod-eu1 \
+  -node-name kind-worker
+```
+
+By default, the check covers broker admin availability plus fresh, stale, and
+missing node evidence. Add `-token-file` to ask the broker to evaluate a
+Kubernetes workload token through the diagnostic admin API without wrapping or
+unwrapping key material:
+
+```sh
+bao-unsealctl k8s check \
+  -addr 127.0.0.1:8443 \
+  -plaintext \
+  -cluster-id prod-eu1 \
+  -node-name kind-worker \
+  -token-file /var/run/secrets/kubernetes.io/serviceaccount/token
+```
+
+The workload check reports the verified subject, sanitized workload placement
+metadata, workload decision, and redacted node evidence metadata. It does not
+return the workload token, raw evidence payload, normalized claim list, or
+future raw node evidence bodies.
 
 ## OpenBao Seal Config
 

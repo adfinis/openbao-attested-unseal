@@ -20,14 +20,23 @@ import (
 	"github.com/adfinis/openbao-attested-unseal/internal/cli"
 	"github.com/adfinis/openbao-attested-unseal/internal/enrollment"
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
+	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	"github.com/adfinis/openbao-attested-unseal/internal/version"
 )
 
 const (
-	testActiveKeyV1   = "prod-eu1/root/v1"
-	testDecisionAllow = "allow"
-	testK8sNodeName   = "kind-worker"
-	testStatusFresh   = "fresh"
+	testActiveKeyV1       = "prod-eu1/root/v1"
+	testDecisionAllow     = "allow"
+	testDecisionDeny      = "deny"
+	testK8sNodeName       = "kind-worker"
+	testK8sNodeUID        = "node-uid"
+	testK8sSubject        = "openbao.openbao"
+	testStatusDenied      = "denied"
+	testStatusFresh       = "fresh"
+	testStatusMissing     = "missing"
+	testStatusStale       = "stale"
+	testStatusVerified    = "verified"
+	testStaleEvidenceHash = "stale-evidence-hash"
 )
 
 func TestInitAndStatusJSON(t *testing.T) {
@@ -656,7 +665,7 @@ func TestK8sPublishNodeJSON(t *testing.T) {
 		"-plaintext",
 		"-cluster-id", "prod-eu1",
 		"-node-name", testK8sNodeName,
-		"-node-uid", "node-uid",
+		"-node-uid", testK8sNodeUID,
 		"-ttl", "1m",
 		"-format", "json",
 	)
@@ -674,7 +683,7 @@ func TestK8sPublishNodeJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NodeEvidence returned error: %v", err)
 	}
-	if evidence.NodeUID != "node-uid" || evidence.Provider != kubernetesProviderFakeLocal {
+	if evidence.NodeUID != testK8sNodeUID || evidence.Provider != kubernetesProviderFakeLocal {
 		t.Fatalf("cached evidence = %#v, want node-uid fake-local", evidence)
 	}
 }
@@ -689,7 +698,7 @@ func TestK8sEvidenceListAndInspectJSON(t *testing.T) {
 		"-plaintext",
 		"-cluster-id", "prod-eu1",
 		"-node-name", testK8sNodeName,
-		"-node-uid", "node-uid",
+		"-node-uid", testK8sNodeUID,
 		"-ttl", "1m",
 		"-format", "json",
 	)
@@ -706,7 +715,7 @@ func TestK8sEvidenceListAndInspectJSON(t *testing.T) {
 		t.Fatalf("list output = %#v, want allow with one record", list)
 	}
 	if list.Evidence[0].NodeName != testK8sNodeName ||
-		list.Evidence[0].NodeUID != "node-uid" ||
+		list.Evidence[0].NodeUID != testK8sNodeUID ||
 		list.Evidence[0].EvidenceHash != published.EvidenceHash {
 		t.Fatalf("list evidence = %#v, want published record", list.Evidence[0])
 	}
@@ -725,15 +734,60 @@ func TestK8sEvidenceListAndInspectJSON(t *testing.T) {
 	}
 }
 
+func TestK8sEvidenceListAndInspectJSONRedactsPayloadFields(t *testing.T) {
+	address, _ := startAdminBrokerTestServer(t)
+
+	var published k8sPublishNodeOutput
+	runJSON(t, &published,
+		"k8s", "publish-node",
+		"-addr", address,
+		"-plaintext",
+		"-cluster-id", "prod-eu1",
+		"-node-name", testK8sNodeName,
+		"-node-uid", testK8sNodeUID,
+		"-ttl", "1m",
+		"-format", "json",
+	)
+
+	for name, output := range map[string]string{
+		"list": runJSONOutput(
+			t,
+			"k8s", "evidence", "list",
+			"-addr", address,
+			"-plaintext",
+			"-cluster-id", "prod-eu1",
+			"-format", "json",
+		),
+		"inspect": runJSONOutput(
+			t,
+			"k8s", "evidence", "inspect",
+			"-addr", address,
+			"-plaintext",
+			"-cluster-id", "prod-eu1",
+			"-node-name", testK8sNodeName,
+			"-format", "json",
+		),
+	} {
+		for _, field := range []string{`"claims"`, `"errors"`, `"policy_id"`} {
+			if strings.Contains(output, field) {
+				t.Fatalf("%s JSON output contains redacted field %s: %s", name, field, output)
+			}
+		}
+		if !strings.Contains(output, published.EvidenceHash) {
+			t.Fatalf("%s JSON output does not preserve evidence hash metadata: %s", name, output)
+		}
+	}
+}
+
 func TestK8sEvidenceListReportsStaleEvidence(t *testing.T) {
 	address, cache := startAdminBrokerTestServer(t)
 	now := time.Now().UTC()
 	err := cache.PutNodeEvidence(context.Background(), broker.NodeEvidence{
 		ClusterID:    "prod-eu1",
 		NodeName:     testK8sNodeName,
-		NodeUID:      "node-uid",
+		NodeUID:      testK8sNodeUID,
 		Provider:     kubernetesProviderFakeLocal,
-		EvidenceHash: "stale-evidence-hash",
+		EvidenceHash: testStaleEvidenceHash,
 		CollectedAt:  now.Add(-2 * time.Minute),
 		ExpiresAt:    now.Add(-time.Minute),
 	})
@@ -750,8 +804,169 @@ func TestK8sEvidenceListReportsStaleEvidence(t *testing.T) {
 		"-node-name", testK8sNodeName,
 		"-format", "json",
 	)
-	if list.Count != 1 || list.Evidence[0].Status != "stale" {
+	if list.Count != 1 || list.Evidence[0].Status != testStatusStale {
 		t.Fatalf("list output = %#v, want one stale record", list)
+	}
+}
+
+func TestK8sCheckReportsFreshEvidenceJSON(t *testing.T) {
+	address, _ := startAdminBrokerTestServer(t)
+	var published k8sPublishNodeOutput
+	runJSON(t, &published,
+		"k8s", "publish-node",
+		"-addr", address,
+		"-plaintext",
+		"-cluster-id", "prod-eu1",
+		"-node-name", testK8sNodeName,
+		"-node-uid", testK8sNodeUID,
+		"-ttl", "1m",
+		"-format", "json",
+	)
+
+	var out k8sCheckOutput
+	runJSON(t, &out,
+		"k8s", "check",
+		"-addr", address,
+		"-plaintext",
+		"-cluster-id", "prod-eu1",
+		"-node-name", testK8sNodeName,
+		"-format", "json",
+	)
+	if !out.BrokerAdminAPI ||
+		out.Status != testStatusFresh ||
+		out.EvidenceStatus != testStatusFresh ||
+		out.Decision != testDecisionAllow ||
+		out.Evidence == nil ||
+		out.Evidence.EvidenceHash != published.EvidenceHash {
+		t.Fatalf("k8s check output = %#v, want fresh allow result", out)
+	}
+}
+
+func TestK8sCheckReportsMissingEvidenceJSON(t *testing.T) {
+	address, _ := startAdminBrokerTestServer(t)
+
+	raw, err := runJSONOutputWithError(t,
+		"k8s", "check",
+		"-addr", address,
+		"-plaintext",
+		"-cluster-id", "prod-eu1",
+		"-node-name", testK8sNodeName,
+		"-format", "json",
+	)
+	if got := cli.ProcessExitCode(err); got != int(cli.ExitCheckFailed) {
+		t.Fatalf("exit code = %d, want %d", got, cli.ExitCheckFailed)
+	}
+	var out k8sCheckOutput
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		t.Fatalf("Unmarshal output returned error: %v\nstdout: %s", err, raw)
+	}
+	if out.Status != testStatusMissing ||
+		out.EvidenceStatus != testStatusMissing ||
+		out.Decision != testDecisionDeny ||
+		out.Evidence != nil ||
+		!strings.Contains(out.Message, "node evidence is missing") {
+		t.Fatalf("k8s check output = %#v, want missing deny result", out)
+	}
+}
+
+func TestK8sCheckReportsStaleEvidenceJSON(t *testing.T) {
+	address, cache := startAdminBrokerTestServer(t)
+	now := time.Now().UTC()
+	err := cache.PutNodeEvidence(context.Background(), broker.NodeEvidence{
+		ClusterID:    "prod-eu1",
+		NodeName:     testK8sNodeName,
+		NodeUID:      testK8sNodeUID,
+		Provider:     kubernetesProviderFakeLocal,
+		EvidenceHash: testStaleEvidenceHash,
+		CollectedAt:  now.Add(-2 * time.Minute),
+		ExpiresAt:    now.Add(-time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("PutNodeEvidence returned error: %v", err)
+	}
+
+	raw, err := runJSONOutputWithError(t,
+		"k8s", "check",
+		"-addr", address,
+		"-plaintext",
+		"-cluster-id", "prod-eu1",
+		"-node-name", testK8sNodeName,
+		"-format", "json",
+	)
+	if got := cli.ProcessExitCode(err); got != int(cli.ExitCheckFailed) {
+		t.Fatalf("exit code = %d, want %d", got, cli.ExitCheckFailed)
+	}
+	var out k8sCheckOutput
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		t.Fatalf("Unmarshal output returned error: %v\nstdout: %s", err, raw)
+	}
+	if out.Status != testStatusStale ||
+		out.EvidenceStatus != testStatusStale ||
+		out.Decision != testDecisionAllow ||
+		out.Evidence == nil ||
+		out.Evidence.EvidenceHash != testStaleEvidenceHash {
+		t.Fatalf("k8s check output = %#v, want stale allow result", out)
+	}
+}
+
+func TestK8sCheckReportsVerifiedWorkloadEvidenceJSON(t *testing.T) {
+	address := startAdminBrokerDiagnosticTestServer(t, testK8sEvidenceVerifier{
+		verified: testK8sVerifiedEvidence(testK8sSubject),
+	})
+	tokenFile := writeTestK8sToken(t, "projected-token")
+
+	var out k8sCheckOutput
+	runJSON(t, &out,
+		"k8s", "check",
+		"-addr", address,
+		"-plaintext",
+		"-cluster-id", "prod-eu1",
+		"-node-name", testK8sNodeName,
+		"-token-file", tokenFile,
+		"-format", "json",
+	)
+	if out.Status != testStatusVerified ||
+		out.WorkloadStatus != testStatusVerified ||
+		out.EvidenceStatus != testStatusFresh ||
+		out.Decision != testDecisionAllow ||
+		out.Subject != testK8sSubject ||
+		out.Workload == nil ||
+		out.Workload.NodeName != testK8sNodeName {
+		t.Fatalf("k8s check workload output = %#v, want verified workload", out)
+	}
+}
+
+func TestK8sCheckReportsDeniedWorkloadEvidenceJSON(t *testing.T) {
+	address := startAdminBrokerDiagnosticTestServer(t, testK8sEvidenceVerifier{
+		verified: testK8sVerifiedEvidence("other.namespace"),
+	})
+	tokenFile := writeTestK8sToken(t, "projected-token")
+
+	raw, err := runJSONOutputWithError(t,
+		"k8s", "check",
+		"-addr", address,
+		"-plaintext",
+		"-cluster-id", "prod-eu1",
+		"-node-name", testK8sNodeName,
+		"-token-file", tokenFile,
+		"-format", "json",
+	)
+	if got := cli.ProcessExitCode(err); got != int(cli.ExitCheckFailed) {
+		t.Fatalf("exit code = %d, want %d", got, cli.ExitCheckFailed)
+	}
+	if strings.Contains(raw, "projected-token") {
+		t.Fatalf("k8s check output leaked workload token: %s", raw)
+	}
+	var out k8sCheckOutput
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		t.Fatalf("Unmarshal output returned error: %v\nstdout: %s", err, raw)
+	}
+	if out.Status != testStatusDenied ||
+		out.WorkloadStatus != testStatusDenied ||
+		out.EvidenceStatus != testStatusFresh ||
+		out.Decision != testDecisionDeny ||
+		!strings.Contains(out.Message, "subject is not allowed") {
+		t.Fatalf("k8s check workload output = %#v, want denied workload", out)
 	}
 }
 
@@ -987,6 +1202,29 @@ func runJSON(t *testing.T, out any, args ...string) {
 	}
 }
 
+func runJSONOutput(t *testing.T, args ...string) string {
+	t.Helper()
+	out, err := runJSONOutputWithError(t, args...)
+	if err != nil {
+		t.Fatalf("Execute(%v) returned error: %v", args, err)
+	}
+	return out
+}
+
+func runJSONOutputWithError(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := Execute(version.Info{Version: "test"}, args, &stdout, &stderr)
+	if stdout.Len() > 0 && !json.Valid(stdout.Bytes()) {
+		t.Fatalf("output is not valid JSON: %s", stdout.String())
+	}
+	if err != nil && stdout.Len() == 0 {
+		t.Logf("Execute(%v) returned error without stdout: %v\nstderr: %s", args, err, stderr.String())
+	}
+	return stdout.String(), err
+}
+
 func runCommand(args ...string) error {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -1025,6 +1263,103 @@ func startAdminBrokerTestServer(t *testing.T) (string, *broker.MemoryNodeEvidenc
 		}
 	})
 	return listener.Addr().String(), cache
+}
+
+func startAdminBrokerDiagnosticTestServer(t *testing.T, verifier broker.EvidenceVerifier) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen returned error: %v", err)
+	}
+	config := broker.Config{
+		AllowPlaintextForTests:   true,
+		SQLitePath:               filepath.Join(t.TempDir(), "broker.db"),
+		KeyringProtectionProfile: broker.DevelopmentProfile,
+		ClusterID:                "prod-eu1",
+		KeyID:                    "root",
+		PolicyID:                 "development",
+		DevelopmentSubject:       testK8sSubject,
+		Kubernetes: broker.KubernetesConfig{
+			AllowFakeNodeEvidencePublish: true,
+		},
+	}
+	store, err := broker.OpenSQLiteStore(context.Background(), config.SQLitePath)
+	if err != nil {
+		t.Fatalf("OpenSQLiteStore returned error: %v", err)
+	}
+	material := bytes.Repeat([]byte{1}, keyring.KeySize)
+	if err := store.ConfigureDevelopment(context.Background(), config, material); err != nil {
+		t.Fatalf("ConfigureDevelopment returned error: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := store.PutNodeEvidence(context.Background(), broker.NodeEvidence{
+		ClusterID:    config.ClusterID,
+		NodeName:     testK8sNodeName,
+		NodeUID:      testK8sNodeUID,
+		Provider:     kubernetesProviderFakeLocal,
+		EvidenceHash: "test-node-evidence-hash",
+		CollectedAt:  now,
+		ExpiresAt:    now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("PutNodeEvidence returned error: %v", err)
+	}
+	service := broker.NewServiceWithEvidenceVerifierAndNodeEvidence(config, store, nil, nil, verifier, store)
+	server, err := broker.NewGRPCServer(config, service, store)
+	if err != nil {
+		t.Fatalf("NewGRPCServer returned error: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		server.Stop()
+		_ = listener.Close()
+		select {
+		case <-errCh:
+		default:
+		}
+		_ = store.Close()
+	})
+	return listener.Addr().String()
+}
+
+type testK8sEvidenceVerifier struct {
+	verified broker.VerifiedEvidence
+	err      error
+}
+
+func (v testK8sEvidenceVerifier) VerifyEvidence(
+	context.Context,
+	*protocolv1.EvidenceEnvelope,
+) (broker.VerifiedEvidence, error) {
+	if v.err != nil {
+		return broker.VerifiedEvidence{}, v.err
+	}
+	return v.verified, nil
+}
+
+func testK8sVerifiedEvidence(subject string) broker.VerifiedEvidence {
+	return broker.VerifiedEvidence{
+		Subject: subject,
+		Workload: broker.WorkloadIdentity{
+			Namespace:      "openbao",
+			ServiceAccount: "openbao",
+			PodName:        "openbao-0",
+			PodUID:         "pod-uid",
+			NodeName:       testK8sNodeName,
+			NodeUID:        testK8sNodeUID,
+		},
+	}
+}
+
+func writeTestK8sToken(t *testing.T, token string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "token.jwt")
+	if err := os.WriteFile(path, []byte(token+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	return path
 }
 
 type openBAORotationTestServer struct {

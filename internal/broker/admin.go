@@ -3,12 +3,15 @@ package broker
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
+	k8sprovider "github.com/adfinis/openbao-attested-unseal/internal/attestation/providers/kubernetes"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 )
 
 const (
+	adminOperationEvidenceCheck       = "EVIDENCE_CHECK"
 	adminOperationNodeEvidenceList    = "NODE_EVIDENCE_LIST"
 	adminOperationNodeEvidencePublish = "NODE_EVIDENCE_PUBLISH"
 )
@@ -23,10 +26,23 @@ type AdminService struct {
 	nodeEvidence                 NodeEvidenceStore
 	auditStore                   adminAuditStore
 	audit                        *FileAuditSink
+	store                        Store
+	verifier                     EvidenceVerifier
 	nodeEvidenceRetention        time.Duration
 	policyID                     string
 	allowFakeNodeEvidencePublish bool
 	clock                        func() time.Time
+}
+
+type adminServiceConfig struct {
+	nodeEvidence                 NodeEvidenceStore
+	auditStore                   adminAuditStore
+	audit                        *FileAuditSink
+	store                        Store
+	verifier                     EvidenceVerifier
+	nodeEvidenceRetention        time.Duration
+	policyID                     string
+	allowFakeNodeEvidencePublish bool
 }
 
 // NewAdminService creates the broker admin service.
@@ -35,31 +51,24 @@ func NewAdminService(
 	policyID string,
 	allowFakeNodeEvidencePublish bool,
 ) AdminService {
-	return newAdminService(
-		nodeEvidence,
-		policyID,
-		allowFakeNodeEvidencePublish,
-		DefaultKubernetesNodeEvidenceRetention,
-		nil,
-		nil,
-	)
-}
-
-func newAdminService(
-	nodeEvidence NodeEvidenceStore,
-	policyID string,
-	allowFakeNodeEvidencePublish bool,
-	nodeEvidenceRetention time.Duration,
-	auditStore adminAuditStore,
-	audit *FileAuditSink,
-) AdminService {
-	return AdminService{
+	return newAdminService(adminServiceConfig{
 		nodeEvidence:                 nodeEvidence,
-		auditStore:                   auditStore,
-		audit:                        audit,
-		nodeEvidenceRetention:        nodeEvidenceRetention,
 		policyID:                     policyID,
 		allowFakeNodeEvidencePublish: allowFakeNodeEvidencePublish,
+		nodeEvidenceRetention:        DefaultKubernetesNodeEvidenceRetention,
+	})
+}
+
+func newAdminService(config adminServiceConfig) AdminService {
+	return AdminService{
+		nodeEvidence:                 config.nodeEvidence,
+		auditStore:                   config.auditStore,
+		audit:                        config.audit,
+		store:                        config.store,
+		verifier:                     config.verifier,
+		nodeEvidenceRetention:        config.nodeEvidenceRetention,
+		policyID:                     config.policyID,
+		allowFakeNodeEvidencePublish: config.allowFakeNodeEvidencePublish,
 		clock:                        time.Now,
 	}
 }
@@ -260,6 +269,72 @@ func (s AdminService) ListNodeEvidence(
 	}, nil
 }
 
+// CheckEvidence evaluates attestation evidence for diagnostics without consuming
+// a challenge or using key material.
+func (s AdminService) CheckEvidence(
+	ctx context.Context,
+	req *protocolv1.EvidenceCheckRequest,
+) (*protocolv1.EvidenceCheckResponse, error) {
+	if req == nil || strings.TrimSpace(req.GetClusterId()) == "" || req.GetEvidence() == nil {
+		decision := Deny(
+			s.policyID,
+			protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
+			"cluster_id and evidence are required",
+		)
+		s.auditEvidenceCheck(ctx, "", "", reqEvidenceHash(req), decision)
+		return &protocolv1.EvidenceCheckResponse{Decision: decision.Proto()}, nil
+	}
+	clusterID := strings.TrimSpace(req.GetClusterId())
+	if s.store == nil {
+		decision := Deny(
+			s.policyID,
+			protocolv1.ErrorCode_ERROR_CODE_INTERNAL,
+			"policy store is not configured",
+		)
+		s.auditEvidenceCheck(ctx, clusterID, "", evidenceHash(req.GetEvidence()), decision)
+		return &protocolv1.EvidenceCheckResponse{Decision: decision.Proto()}, nil
+	}
+
+	verifier := s.verifier
+	if verifier == nil {
+		verifier = DevelopmentEvidenceVerifier{}
+	}
+	verified, err := verifier.VerifyEvidence(ctx, req.GetEvidence())
+	if err != nil {
+		decision := evidenceCheckVerificationDeny(s.policyID, err)
+		s.auditEvidenceCheck(ctx, clusterID, "", evidenceHash(req.GetEvidence()), decision)
+		return &protocolv1.EvidenceCheckResponse{Decision: decision.Proto()}, nil
+	}
+
+	operation := req.GetOperation()
+	if operation == protocolv1.Operation_OPERATION_UNSPECIFIED {
+		operation = protocolv1.Operation_OPERATION_WRAP
+	}
+	engine := NewPolicyEngine(s.store, s.policyID, nil)
+	engine.nodeEvidence = s.nodeEvidence
+	engine.clock = s.now
+	decision := engine.evaluateSubjectAndNodeEvidence(ctx, policyRequest{
+		ClusterID: clusterID,
+		Subject:   verified.Subject,
+		Workload:  verified.Workload,
+		Operation: operation,
+	})
+	nodeEvidence := s.diagnosticNodeEvidence(ctx, clusterID, verified.Workload.NodeName)
+	s.auditEvidenceCheck(
+		ctx,
+		clusterID,
+		verified.Workload.NodeName,
+		evidenceHash(req.GetEvidence()),
+		decision,
+	)
+	return &protocolv1.EvidenceCheckResponse{
+		Decision:     decision.Proto(),
+		Subject:      verified.Subject,
+		Workload:     workloadIdentityToProto(verified.Workload),
+		NodeEvidence: nodeEvidence,
+	}, nil
+}
+
 func (s AdminService) now() time.Time {
 	if s.clock == nil {
 		return time.Now()
@@ -277,6 +352,31 @@ func (s AdminService) pruneNodeEvidence(ctx context.Context, clusterID string) e
 	}
 	_, err := s.nodeEvidence.PruneNodeEvidence(ctx, clusterID, s.now().UTC().Add(-retention))
 	return err
+}
+
+func (s AdminService) diagnosticNodeEvidence(
+	ctx context.Context,
+	clusterID string,
+	nodeName string,
+) *protocolv1.NodeEvidenceRecord {
+	if s.nodeEvidence == nil || strings.TrimSpace(nodeName) == "" {
+		return nil
+	}
+	evidence, err := s.nodeEvidence.NodeEvidence(ctx, clusterID, nodeName)
+	if err != nil {
+		return nil
+	}
+	return nodeEvidenceToProto(evidence, s.now())
+}
+
+func (s AdminService) auditEvidenceCheck(
+	ctx context.Context,
+	clusterID string,
+	nodeName string,
+	hash string,
+	decision PolicyDecision,
+) {
+	s.auditNodeEvidence(ctx, adminOperationEvidenceCheck, clusterID, nodeName, hash, decision)
 }
 
 func (s AdminService) auditNodeEvidence(
@@ -330,6 +430,74 @@ func (s AdminService) newNodeEvidenceAuditEvent(
 	}, nil
 }
 
+func evidenceCheckVerificationDeny(policyID string, err error) PolicyDecision {
+	switch {
+	case errors.Is(err, k8sprovider.ErrTokenReview):
+		return Deny(policyID, protocolv1.ErrorCode_ERROR_CODE_BROKER_UNAVAILABLE, "kubernetes tokenreview failed")
+	case errors.Is(err, k8sprovider.ErrUnauthenticated):
+		return Deny(policyID, protocolv1.ErrorCode_ERROR_CODE_UNAUTHENTICATED, "kubernetes token is not authenticated")
+	case errors.Is(err, k8sprovider.ErrInvalidEvidence):
+		return Deny(policyID, protocolv1.ErrorCode_ERROR_CODE_ATTESTATION_FAILED, safeEvidenceCheckReason(err))
+	default:
+		return Deny(policyID, protocolv1.ErrorCode_ERROR_CODE_ATTESTATION_FAILED, "attestation verification failed")
+	}
+}
+
+var safeEvidenceCheckReasons = []struct {
+	fragment string
+	reason   string
+}{
+	{"audience was not accepted", "kubernetes token audience was not accepted"},
+	{"namespace is not allowed", "kubernetes namespace is not allowed"},
+	{"service account is not allowed", "kubernetes service account is not allowed"},
+	{"token is required", "kubernetes token is required"},
+	{"pod-bound token claims are required", "pod-bound token claims are required"},
+	{"pod-bound token node claim is required", "pod-bound token node claim is required"},
+	{"pod name and UID claims are required", "pod name and UID claims are required"},
+	{"pod lookup failed", "kubernetes pod lookup failed"},
+	{"pod UID does not match token", "pod UID does not match token"},
+	{"pod node does not match token", "pod node does not match token"},
+	{"pod is not scheduled to a node", "pod is not scheduled to a node"},
+	{"username is not a service account", "kubernetes username is not a service account"},
+	{"service account username is incomplete", "kubernetes service account username is incomplete"},
+	{"provider is not Kubernetes workload", "evidence provider is not Kubernetes workload"},
+	{"unsupported evidence format", "unsupported Kubernetes evidence format"},
+	{"payload is required", "evidence payload is required"},
+	{"payload exceeds maximum size", "evidence payload exceeds maximum size"},
+	{"decode payload", "evidence payload could not be decoded"},
+}
+
+func safeEvidenceCheckReason(err error) string {
+	message := err.Error()
+	for _, item := range safeEvidenceCheckReasons {
+		if strings.Contains(message, item.fragment) {
+			return item.reason
+		}
+	}
+	return "attestation verification failed"
+}
+
+func reqEvidenceHash(req *protocolv1.EvidenceCheckRequest) string {
+	if req == nil {
+		return ""
+	}
+	return evidenceHash(req.GetEvidence())
+}
+
+func workloadIdentityToProto(workload WorkloadIdentity) *protocolv1.WorkloadIdentity {
+	if workload == (WorkloadIdentity{}) {
+		return nil
+	}
+	return &protocolv1.WorkloadIdentity{
+		Namespace:      workload.Namespace,
+		ServiceAccount: workload.ServiceAccount,
+		PodName:        workload.PodName,
+		PodUid:         workload.PodUID,
+		NodeName:       workload.NodeName,
+		NodeUid:        workload.NodeUID,
+	}
+}
+
 func nodeEvidenceFromProto(record *protocolv1.NodeEvidenceRecord) (NodeEvidence, error) {
 	if record == nil {
 		return NodeEvidence{}, errors.New("node evidence record is required")
@@ -360,6 +528,9 @@ func nodeEvidenceProviderID(record *protocolv1.NodeEvidenceRecord) string {
 	return record.GetProvider().String()
 }
 
+// nodeEvidenceToProto returns the operator-safe diagnostic projection. It must
+// not echo submitted raw claims, broker errors, policy payloads, or future
+// evidence bodies.
 func nodeEvidenceToProto(evidence NodeEvidence, now time.Time) *protocolv1.NodeEvidenceRecord {
 	status := protocolv1.NodeEvidenceStatus_NODE_EVIDENCE_STATUS_FRESH
 	if !evidence.ExpiresAt.After(now) {

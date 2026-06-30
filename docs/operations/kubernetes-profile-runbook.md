@@ -2,7 +2,7 @@
 
 Status: draft
 
-Last reviewed: 2026-06-29
+Last reviewed: 2026-06-30
 
 This runbook covers the beta Kubernetes broker profile. It assumes
 `bao-unseald` is configured with the Kubernetes verifier and that node evidence
@@ -74,6 +74,10 @@ publisher failure.
 available for diagnostics after it expires. Broker admin publish/list operations
 prune evidence whose `expires_at` is older than this retention window.
 
+Diagnostics show node evidence metadata and evidence hashes only. They do not
+show submitted raw claims, broker error payloads, policy fields, or future raw
+evidence bodies.
+
 For example:
 
 - publisher interval: 60 seconds;
@@ -96,9 +100,40 @@ bao-unsealctl k8s publish-node \
 ```
 
 Use `-ttl` to shorten stale-evidence tests. The fake publish path stores
-evidence only in the running broker process; restart the broker and the record
-is gone. The broker must have `allow_fake_node_evidence_publish` enabled for
-this command to succeed.
+evidence in the broker node evidence store. In normal broker runtime this store
+is SQLite-backed; unit tests can use an in-memory cache. The broker must have
+`allow_fake_node_evidence_publish` enabled for this command to succeed.
+
+Check broker-side node evidence state for one node:
+
+```sh
+bao-unsealctl k8s check \
+  -addr 127.0.0.1:8443 \
+  -plaintext \
+  -cluster-id prod-eu1 \
+  -node-name kind-worker
+```
+
+By default, `k8s check` classifies broker reachability and node evidence as
+`fresh`, `stale`, `missing`, or `unavailable`.
+
+When a workload token is available, include `-token-file` to run a broker-side
+workload evidence diagnostic without wrapping or unwrapping key material:
+
+```sh
+bao-unsealctl k8s check \
+  -addr 127.0.0.1:8443 \
+  -plaintext \
+  -cluster-id prod-eu1 \
+  -node-name kind-worker \
+  -token-file /var/run/secrets/kubernetes.io/serviceaccount/token \
+  -format json
+```
+
+The token check can distinguish invalid or unauthenticated workload evidence,
+wrong TokenReview audience, subject policy denial, and missing or stale node
+evidence. It reports sanitized workload placement metadata and redacted node
+evidence metadata; it does not print the token or raw evidence payload.
 
 ## Revocation
 

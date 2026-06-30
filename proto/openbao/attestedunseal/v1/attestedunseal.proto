@@ -23,6 +23,7 @@ service AdminService {
   rpc Status(AdminStatusRequest) returns (AdminStatusResponse);
   rpc PublishNodeEvidence(NodeEvidencePublishRequest) returns (NodeEvidencePublishResponse);
   rpc ListNodeEvidence(NodeEvidenceListRequest) returns (NodeEvidenceListResponse);
+  rpc CheckEvidence(EvidenceCheckRequest) returns (EvidenceCheckResponse);
 }
 
 enum Operation {
@@ -162,6 +163,29 @@ message NodeEvidencePublishRequest {
 message NodeEvidencePublishResponse {
   NodeEvidenceRecord evidence = 1;
   PolicyDecision decision = 2;
+}
+
+message WorkloadIdentity {
+  string namespace = 1;
+  string service_account = 2;
+  string pod_name = 3;
+  string pod_uid = 4;
+  string node_name = 5;
+  string node_uid = 6;
+}
+
+message EvidenceCheckRequest {
+  string cluster_id = 1;
+  Operation operation = 2;
+  EvidenceEnvelope evidence = 3;
+  AuditContext audit = 4;
+}
+
+message EvidenceCheckResponse {
+  PolicyDecision decision = 1;
+  string subject = 2;
+  WorkloadIdentity workload = 3;
+  NodeEvidenceRecord node_evidence = 4;
 }
 
 message PolicyDecision {

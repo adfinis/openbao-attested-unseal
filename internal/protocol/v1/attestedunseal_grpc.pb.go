@@ -442,6 +442,7 @@ const (
 	AdminService_Status_FullMethodName              = "/openbao.attestedunseal.v1.AdminService/Status"
 	AdminService_PublishNodeEvidence_FullMethodName = "/openbao.attestedunseal.v1.AdminService/PublishNodeEvidence"
 	AdminService_ListNodeEvidence_FullMethodName    = "/openbao.attestedunseal.v1.AdminService/ListNodeEvidence"
+	AdminService_CheckEvidence_FullMethodName       = "/openbao.attestedunseal.v1.AdminService/CheckEvidence"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -451,6 +452,7 @@ type AdminServiceClient interface {
 	Status(ctx context.Context, in *AdminStatusRequest, opts ...grpc.CallOption) (*AdminStatusResponse, error)
 	PublishNodeEvidence(ctx context.Context, in *NodeEvidencePublishRequest, opts ...grpc.CallOption) (*NodeEvidencePublishResponse, error)
 	ListNodeEvidence(ctx context.Context, in *NodeEvidenceListRequest, opts ...grpc.CallOption) (*NodeEvidenceListResponse, error)
+	CheckEvidence(ctx context.Context, in *EvidenceCheckRequest, opts ...grpc.CallOption) (*EvidenceCheckResponse, error)
 }
 
 type adminServiceClient struct {
@@ -491,6 +493,16 @@ func (c *adminServiceClient) ListNodeEvidence(ctx context.Context, in *NodeEvide
 	return out, nil
 }
 
+func (c *adminServiceClient) CheckEvidence(ctx context.Context, in *EvidenceCheckRequest, opts ...grpc.CallOption) (*EvidenceCheckResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EvidenceCheckResponse)
+	err := c.cc.Invoke(ctx, AdminService_CheckEvidence_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AdminServiceServer is the server API for AdminService service.
 // All implementations must embed UnimplementedAdminServiceServer
 // for forward compatibility.
@@ -498,6 +510,7 @@ type AdminServiceServer interface {
 	Status(context.Context, *AdminStatusRequest) (*AdminStatusResponse, error)
 	PublishNodeEvidence(context.Context, *NodeEvidencePublishRequest) (*NodeEvidencePublishResponse, error)
 	ListNodeEvidence(context.Context, *NodeEvidenceListRequest) (*NodeEvidenceListResponse, error)
+	CheckEvidence(context.Context, *EvidenceCheckRequest) (*EvidenceCheckResponse, error)
 	mustEmbedUnimplementedAdminServiceServer()
 }
 
@@ -516,6 +529,9 @@ func (UnimplementedAdminServiceServer) PublishNodeEvidence(context.Context, *Nod
 }
 func (UnimplementedAdminServiceServer) ListNodeEvidence(context.Context, *NodeEvidenceListRequest) (*NodeEvidenceListResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListNodeEvidence not implemented")
+}
+func (UnimplementedAdminServiceServer) CheckEvidence(context.Context, *EvidenceCheckRequest) (*EvidenceCheckResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CheckEvidence not implemented")
 }
 func (UnimplementedAdminServiceServer) mustEmbedUnimplementedAdminServiceServer() {}
 func (UnimplementedAdminServiceServer) testEmbeddedByValue()                      {}
@@ -592,6 +608,24 @@ func _AdminService_ListNodeEvidence_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AdminService_CheckEvidence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EvidenceCheckRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).CheckEvidence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_CheckEvidence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).CheckEvidence(ctx, req.(*EvidenceCheckRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AdminService_ServiceDesc is the grpc.ServiceDesc for AdminService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -610,6 +644,10 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListNodeEvidence",
 			Handler:    _AdminService_ListNodeEvidence_Handler,
+		},
+		{
+			MethodName: "CheckEvidence",
+			Handler:    _AdminService_CheckEvidence_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
