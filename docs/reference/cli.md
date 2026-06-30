@@ -6,6 +6,7 @@ All binaries support `help` and `version`:
 bao-kms-unseal version
 bao-unseald version
 bao-unsealctl version
+bao-unseal-agent version
 ```
 
 `bao-unseald` also supports broker startup and local diagnostics:
@@ -43,6 +44,14 @@ bao-unsealctl tpm status -state-path /var/lib/openbao-attested-unseal
 ```
 
 Use `--format json` on lifecycle commands for automation.
+
+`bao-unseal-agent` is the node-local evidence publisher. The first beta command
+publishes one synthetic `fake-local` evidence record and exits:
+
+```sh
+bao-unseal-agent publish-once -addr 127.0.0.1:8443 -plaintext \
+  -cluster-id prod-eu1 -node-name kind-worker
+```
 
 `k8s publish-node` is a beta lab helper. It publishes synthetic `fake-local`
 node evidence to a broker admin API so kind and local tests can exercise node

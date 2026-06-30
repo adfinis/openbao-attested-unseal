@@ -17,6 +17,7 @@ providers still need production hardening.
 | `bao-kms-unseal` | OpenBao KMS plugin entrypoint. |
 | `bao-unseald` | Internal-network attested unseal broker daemon. |
 | `bao-unsealctl` | Operator lifecycle CLI for enrollment, recovery, and diagnostics. |
+| `bao-unseal-agent` | Node-local evidence publisher for brokered attestation. |
 
 ## Local Checks
 

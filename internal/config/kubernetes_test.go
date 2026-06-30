@@ -53,3 +53,14 @@ func TestKubernetesAPIServerRejectsMissingHost(t *testing.T) {
 		t.Fatalf("KubernetesAPIServer error = %v, want api_server error", err)
 	}
 }
+
+func TestEnvOrDefault(t *testing.T) {
+	t.Setenv("BAO_TEST_VALUE", " explicit ")
+	if got := EnvOrDefault("BAO_TEST_VALUE", "fallback"); got != "explicit" {
+		t.Fatalf("EnvOrDefault explicit = %q, want trimmed value", got)
+	}
+	t.Setenv("BAO_TEST_EMPTY", " ")
+	if got := EnvOrDefault("BAO_TEST_EMPTY", "fallback"); got != "fallback" {
+		t.Fatalf("EnvOrDefault empty = %q, want fallback", got)
+	}
+}

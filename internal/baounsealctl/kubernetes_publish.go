@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/adfinis/openbao-attested-unseal/internal/broker"
+	"github.com/adfinis/openbao-attested-unseal/internal/brokeradmin"
 	"github.com/adfinis/openbao-attested-unseal/internal/cli"
 	"github.com/adfinis/openbao-attested-unseal/internal/nodeagent"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
@@ -143,7 +144,7 @@ func publishK8sNodeEvidence(options k8sPublishNodeOptions) (k8sPublishNodeOutput
 	ctx, cancel := context.WithTimeout(cli.ProcessContext(), options.timeout)
 	defer cancel()
 	client := protocolv1.NewAdminServiceClient(conn)
-	writer := &brokerAdminNodeEvidenceWriter{client: client}
+	writer := &brokeradmin.NodeEvidenceWriter{Client: client}
 	publisher := nodeagent.Publisher{
 		Writer:   writer,
 		Provider: k8sPublishNodeProvider(options),
@@ -155,41 +156,20 @@ func publishK8sNodeEvidence(options k8sPublishNodeOptions) (k8sPublishNodeOutput
 		TTL:       options.ttl,
 	})
 	if err != nil {
-		return k8sPublishNodeOutput{}, err
+		return k8sPublishNodeOutput{}, k8sPublishNodeExitError(err)
 	}
-	return k8sPublishNodeOutputFromProto(writer.evidence, writer.decision), nil
+	return k8sPublishNodeOutputFromProto(writer.Evidence, writer.Decision), nil
 }
 
-type brokerAdminNodeEvidenceWriter struct {
-	client   protocolv1.AdminServiceClient
-	evidence *protocolv1.NodeEvidenceRecord
-	decision *protocolv1.PolicyDecision
-}
-
-func (w *brokerAdminNodeEvidenceWriter) PutNodeEvidence(
-	ctx context.Context,
-	evidence broker.NodeEvidence,
-) error {
-	response, err := w.client.PublishNodeEvidence(ctx, &protocolv1.NodeEvidencePublishRequest{
-		Evidence: &protocolv1.NodeEvidenceRecord{
-			ClusterId:            evidence.ClusterID,
-			NodeName:             evidence.NodeName,
-			NodeUid:              evidence.NodeUID,
-			ProviderId:           evidence.Provider,
-			EvidenceHash:         evidence.EvidenceHash,
-			CollectedUnixSeconds: evidence.CollectedAt.Unix(),
-			ExpiresUnixSeconds:   evidence.ExpiresAt.Unix(),
-		},
-	})
-	if err != nil {
-		return cli.WithExitCode(cli.ExitRuntime, fmt.Errorf("publish node evidence: %w", err))
-	}
-	w.evidence = response.GetEvidence()
-	w.decision = response.GetDecision()
-	if err := requireAllowDecision(response.GetDecision(), "publish node evidence"); err != nil {
+func k8sPublishNodeExitError(err error) error {
+	var denied brokeradmin.DecisionDeniedError
+	if errors.As(err, &denied) {
 		return cli.WithExitCode(cli.ExitCheckFailed, err)
 	}
-	return nil
+	if errors.Is(err, brokeradmin.ErrPublishNodeEvidence) {
+		return cli.WithExitCode(cli.ExitRuntime, err)
+	}
+	return err
 }
 
 func k8sPublishNodeProvider(options k8sPublishNodeOptions) nodeagent.Provider {

@@ -129,10 +129,10 @@ The current fake/local node evidence fixture shape is:
 TPM identity, Secure Boot, measured boot, confidential launch, or platform
 anti-cloning.
 
-The reusable node evidence publisher primitive currently supports the same
-`fake-local` provider for tests and local labs. A production node agent still
-needs a real node evidence provider, such as TPM-backed evidence, before this
-becomes a security boundary.
+`bao-unseal-agent publish-once` and the reusable node evidence publisher
+primitive currently support the same `fake-local` provider for tests and local
+labs. A production node agent still needs a real node evidence provider, such as
+TPM-backed evidence, before this becomes a security boundary.
 
 Broker diagnostics expose only node evidence metadata: cluster, node name,
 optional node UID, provider, evidence hash, timestamps, and freshness status.
@@ -141,6 +141,17 @@ fields, or future raw evidence bodies.
 
 For local broker tests, publish synthetic node evidence through the broker
 admin API:
+
+```sh
+bao-unseal-agent publish-once \
+  -addr 127.0.0.1:8443 \
+  -plaintext \
+  -cluster-id prod-eu1 \
+  -node-name kind-worker
+```
+
+The operator CLI keeps a lab-oriented helper for the same fake-local publish
+path:
 
 ```sh
 bao-unsealctl k8s publish-node \
