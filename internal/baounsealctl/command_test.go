@@ -23,7 +23,12 @@ import (
 	"github.com/adfinis/openbao-attested-unseal/internal/version"
 )
 
-const testActiveKeyV1 = "prod-eu1/root/v1"
+const (
+	testActiveKeyV1   = "prod-eu1/root/v1"
+	testDecisionAllow = "allow"
+	testK8sNodeName   = "kind-worker"
+	testStatusFresh   = "fresh"
+)
 
 func TestInitAndStatusJSON(t *testing.T) {
 	dir := t.TempDir()
@@ -650,12 +655,12 @@ func TestK8sPublishNodeJSON(t *testing.T) {
 		"-addr", address,
 		"-plaintext",
 		"-cluster-id", "prod-eu1",
-		"-node-name", "kind-worker",
+		"-node-name", testK8sNodeName,
 		"-node-uid", "node-uid",
 		"-ttl", "1m",
 		"-format", "json",
 	)
-	if out.Decision != "allow" || out.Status != "fresh" {
+	if out.Decision != testDecisionAllow || out.Status != testStatusFresh {
 		t.Fatalf("publish output = %#v, want allow/fresh", out)
 	}
 	if out.ProviderID != kubernetesProviderFakeLocal {
@@ -665,12 +670,113 @@ func TestK8sPublishNodeJSON(t *testing.T) {
 		t.Fatalf("publish output is missing evidence metadata: %#v", out)
 	}
 
-	evidence, err := cache.NodeEvidence(context.Background(), "prod-eu1", "kind-worker")
+	evidence, err := cache.NodeEvidence(context.Background(), "prod-eu1", testK8sNodeName)
 	if err != nil {
 		t.Fatalf("NodeEvidence returned error: %v", err)
 	}
 	if evidence.NodeUID != "node-uid" || evidence.Provider != kubernetesProviderFakeLocal {
 		t.Fatalf("cached evidence = %#v, want node-uid fake-local", evidence)
+	}
+}
+
+func TestK8sEvidenceListAndInspectJSON(t *testing.T) {
+	address, _ := startAdminBrokerTestServer(t)
+
+	var published k8sPublishNodeOutput
+	runJSON(t, &published,
+		"k8s", "publish-node",
+		"-addr", address,
+		"-plaintext",
+		"-cluster-id", "prod-eu1",
+		"-node-name", testK8sNodeName,
+		"-node-uid", "node-uid",
+		"-ttl", "1m",
+		"-format", "json",
+	)
+
+	var list k8sEvidenceListOutput
+	runJSON(t, &list,
+		"k8s", "evidence", "list",
+		"-addr", address,
+		"-plaintext",
+		"-cluster-id", "prod-eu1",
+		"-format", "json",
+	)
+	if list.Decision != testDecisionAllow || list.Count != 1 {
+		t.Fatalf("list output = %#v, want allow with one record", list)
+	}
+	if list.Evidence[0].NodeName != testK8sNodeName ||
+		list.Evidence[0].NodeUID != "node-uid" ||
+		list.Evidence[0].EvidenceHash != published.EvidenceHash {
+		t.Fatalf("list evidence = %#v, want published record", list.Evidence[0])
+	}
+
+	var inspect k8sEvidenceInspectOutput
+	runJSON(t, &inspect,
+		"k8s", "evidence", "inspect",
+		"-addr", address,
+		"-plaintext",
+		"-cluster-id", "prod-eu1",
+		"-node-name", testK8sNodeName,
+		"-format", "json",
+	)
+	if inspect.Decision != testDecisionAllow || inspect.Evidence.NodeName != testK8sNodeName {
+		t.Fatalf("inspect output = %#v, want allow kind-worker", inspect)
+	}
+}
+
+func TestK8sEvidenceListReportsStaleEvidence(t *testing.T) {
+	address, cache := startAdminBrokerTestServer(t)
+	now := time.Now().UTC()
+	err := cache.PutNodeEvidence(context.Background(), broker.NodeEvidence{
+		ClusterID:    "prod-eu1",
+		NodeName:     testK8sNodeName,
+		NodeUID:      "node-uid",
+		Provider:     kubernetesProviderFakeLocal,
+		EvidenceHash: "stale-evidence-hash",
+		CollectedAt:  now.Add(-2 * time.Minute),
+		ExpiresAt:    now.Add(-time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("PutNodeEvidence returned error: %v", err)
+	}
+
+	var list k8sEvidenceListOutput
+	runJSON(t, &list,
+		"k8s", "evidence", "list",
+		"-addr", address,
+		"-plaintext",
+		"-cluster-id", "prod-eu1",
+		"-node-name", testK8sNodeName,
+		"-format", "json",
+	)
+	if list.Count != 1 || list.Evidence[0].Status != "stale" {
+		t.Fatalf("list output = %#v, want one stale record", list)
+	}
+}
+
+func TestK8sEvidenceListMissingEvidenceFailsCheck(t *testing.T) {
+	address, _ := startAdminBrokerTestServer(t)
+
+	err := runCommand(
+		"k8s", "evidence", "list",
+		"-addr", address,
+		"-plaintext",
+		"-cluster-id", "prod-eu1",
+	)
+	if got := cli.ProcessExitCode(err); got != int(cli.ExitCheckFailed) {
+		t.Fatalf("exit code = %d, want %d", got, cli.ExitCheckFailed)
+	}
+}
+
+func TestK8sEvidenceInspectRequiresNodeName(t *testing.T) {
+	err := runCommand(
+		"k8s", "evidence", "inspect",
+		"-addr", "127.0.0.1:8443",
+		"-plaintext",
+	)
+	if got := cli.ProcessExitCode(err); got != int(cli.ExitUsage) {
+		t.Fatalf("exit code = %d, want %d", got, cli.ExitUsage)
 	}
 }
 
