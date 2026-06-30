@@ -129,6 +129,11 @@ The current fake/local node evidence fixture shape is:
 TPM identity, Secure Boot, measured boot, confidential launch, or platform
 anti-cloning.
 
+The reusable node evidence publisher primitive currently supports the same
+`fake-local` provider for tests and local labs. A production node agent still
+needs a real node evidence provider, such as TPM-backed evidence, before this
+becomes a security boundary.
+
 Broker diagnostics expose only node evidence metadata: cluster, node name,
 optional node UID, provider, evidence hash, timestamps, and freshness status.
 They do not return submitted raw claim lists, broker error payloads, policy

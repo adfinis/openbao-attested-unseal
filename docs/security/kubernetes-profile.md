@@ -171,6 +171,7 @@ Current tests cover:
 - runtime broker wiring against a fake Kubernetes API server;
 - policy allow, stale evidence denial, and node UID mismatch using
   fake/local node evidence fixtures;
+- reusable fake-local node evidence publisher contract;
 - broker admin publish/list APIs and `bao-unsealctl k8s publish-node` for
   synthetic local node evidence;
 - broker admin evidence diagnostics and `bao-unsealctl k8s check -token-file`

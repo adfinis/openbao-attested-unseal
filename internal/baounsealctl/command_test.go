@@ -20,6 +20,7 @@ import (
 	"github.com/adfinis/openbao-attested-unseal/internal/cli"
 	"github.com/adfinis/openbao-attested-unseal/internal/enrollment"
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
+	"github.com/adfinis/openbao-attested-unseal/internal/nodeagent"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	"github.com/adfinis/openbao-attested-unseal/internal/version"
 )
@@ -678,6 +679,18 @@ func TestK8sPublishNodeJSON(t *testing.T) {
 	if out.EvidenceHash == "" || out.CollectedAt == "" || out.ExpiresAt == "" {
 		t.Fatalf("publish output is missing evidence metadata: %#v", out)
 	}
+	expected, err := (nodeagent.FakeLocalProvider{}).CollectNodeEvidence(context.Background(), nodeagent.PublishRequest{
+		ClusterID: "prod-eu1",
+		NodeName:  testK8sNodeName,
+		NodeUID:   testK8sNodeUID,
+		TTL:       time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("CollectNodeEvidence returned error: %v", err)
+	}
+	if out.EvidenceHash != expected.EvidenceHash {
+		t.Fatalf("evidence_hash = %q, want fake-local provider hash %q", out.EvidenceHash, expected.EvidenceHash)
+	}
 
 	evidence, err := cache.NodeEvidence(context.Background(), "prod-eu1", testK8sNodeName)
 	if err != nil {
@@ -685,6 +698,25 @@ func TestK8sPublishNodeJSON(t *testing.T) {
 	}
 	if evidence.NodeUID != testK8sNodeUID || evidence.Provider != kubernetesProviderFakeLocal {
 		t.Fatalf("cached evidence = %#v, want node-uid fake-local", evidence)
+	}
+}
+
+func TestK8sPublishNodePreservesCustomEvidenceHash(t *testing.T) {
+	address, _ := startAdminBrokerTestServer(t)
+
+	var out k8sPublishNodeOutput
+	runJSON(t, &out,
+		"k8s", "publish-node",
+		"-addr", address,
+		"-plaintext",
+		"-cluster-id", "prod-eu1",
+		"-node-name", testK8sNodeName,
+		"-evidence-hash", "custom-evidence-hash",
+		"-ttl", "1m",
+		"-format", "json",
+	)
+	if out.Decision != testDecisionAllow || out.EvidenceHash != "custom-evidence-hash" {
+		t.Fatalf("publish output = %#v, want custom evidence hash", out)
 	}
 }
 
