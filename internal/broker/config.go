@@ -19,6 +19,8 @@ const (
 	DefaultChallengeTTL = 2 * time.Minute
 	// DefaultKubernetesNodeEvidenceTTL is used when Kubernetes config omits node_evidence_ttl_seconds.
 	DefaultKubernetesNodeEvidenceTTL = 5 * time.Minute
+	// DefaultKubernetesNodeEvidenceRetention is used when Kubernetes config omits node_evidence_retention_seconds.
+	DefaultKubernetesNodeEvidenceRetention = 24 * time.Hour
 	// DefaultKubernetesAPITimeout is used when Kubernetes config omits api_timeout_seconds.
 	DefaultKubernetesAPITimeout = 10 * time.Second
 	// DevelopmentProfile is the only keyring profile implemented by the M2 skeleton.
@@ -65,6 +67,7 @@ type KubernetesConfig struct {
 	Namespace                        string `json:"namespace"`
 	ServiceAccount                   string `json:"service_account"`
 	NodeEvidenceTTLSeconds           int64  `json:"node_evidence_ttl_seconds"`
+	NodeEvidenceRetentionSeconds     int64  `json:"node_evidence_retention_seconds"`
 	APITimeoutSeconds                int64  `json:"api_timeout_seconds"`
 	AllowUnboundServiceAccountTokens bool   `json:"allow_unbound_service_account_tokens"`
 	AllowFakeNodeEvidencePublish     bool   `json:"allow_fake_node_evidence_publish"`
@@ -240,13 +243,16 @@ func (c Config) validateChallengeTTL() error {
 
 func (c Config) validateKubernetes() error {
 	kubernetes := c.Kubernetes
+	if kubernetes.NodeEvidenceTTLSeconds < 0 {
+		return errors.New("kubernetes.node_evidence_ttl_seconds must not be negative")
+	}
+	if kubernetes.NodeEvidenceRetentionSeconds < 0 {
+		return errors.New("kubernetes.node_evidence_retention_seconds must not be negative")
+	}
+	if kubernetes.APITimeoutSeconds < 0 {
+		return errors.New("kubernetes.api_timeout_seconds must not be negative")
+	}
 	if !kubernetes.Enabled {
-		if kubernetes.NodeEvidenceTTLSeconds < 0 {
-			return errors.New("kubernetes.node_evidence_ttl_seconds must not be negative")
-		}
-		if kubernetes.APITimeoutSeconds < 0 {
-			return errors.New("kubernetes.api_timeout_seconds must not be negative")
-		}
 		return nil
 	}
 	if strings.TrimSpace(kubernetes.TokenReviewAudience) == "" {
@@ -287,6 +293,14 @@ func (k KubernetesConfig) NodeEvidenceTTL() time.Duration {
 		return DefaultKubernetesNodeEvidenceTTL
 	}
 	return time.Duration(k.NodeEvidenceTTLSeconds) * time.Second
+}
+
+// NodeEvidenceRetention returns how long stale node evidence remains available for diagnostics.
+func (k KubernetesConfig) NodeEvidenceRetention() time.Duration {
+	if k.NodeEvidenceRetentionSeconds == 0 {
+		return DefaultKubernetesNodeEvidenceRetention
+	}
+	return time.Duration(k.NodeEvidenceRetentionSeconds) * time.Second
 }
 
 // APITimeout returns the configured Kubernetes API request timeout.

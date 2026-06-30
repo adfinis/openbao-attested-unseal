@@ -58,6 +58,7 @@ service environment and uses the mounted service account token and CA file.
     "namespace": "openbao",
     "service_account": "openbao",
     "node_evidence_ttl_seconds": 300,
+    "node_evidence_retention_seconds": 86400,
     "api_timeout_seconds": 10,
     "allow_unbound_service_account_tokens": false,
     "allow_fake_node_evidence_publish": false
@@ -81,6 +82,7 @@ cluster or against a fake API server.
     "namespace": "openbao",
     "service_account": "openbao",
     "node_evidence_ttl_seconds": 30,
+    "node_evidence_retention_seconds": 3600,
     "api_timeout_seconds": 5,
     "allow_unbound_service_account_tokens": false,
     "allow_fake_node_evidence_publish": false

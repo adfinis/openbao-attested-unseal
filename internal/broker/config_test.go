@@ -13,18 +13,22 @@ func TestConfigValidateAcceptsDefaultDisabledKubernetes(t *testing.T) {
 	if got := config.Kubernetes.NodeEvidenceTTL(); got != DefaultKubernetesNodeEvidenceTTL {
 		t.Fatalf("NodeEvidenceTTL = %s, want %s", got, DefaultKubernetesNodeEvidenceTTL)
 	}
+	if got := config.Kubernetes.NodeEvidenceRetention(); got != DefaultKubernetesNodeEvidenceRetention {
+		t.Fatalf("NodeEvidenceRetention = %s, want %s", got, DefaultKubernetesNodeEvidenceRetention)
+	}
 }
 
 func TestConfigValidateAcceptsEnabledKubernetes(t *testing.T) {
 	config := validBrokerConfig()
 	config.Kubernetes = KubernetesConfig{
-		Enabled:                true,
-		APIServer:              "https://kubernetes.default.svc",
-		TokenReviewAudience:    "bao-unseald",
-		Namespace:              "openbao",
-		ServiceAccount:         "openbao",
-		NodeEvidenceTTLSeconds: 30,
-		APITimeoutSeconds:      5,
+		Enabled:                      true,
+		APIServer:                    "https://kubernetes.default.svc",
+		TokenReviewAudience:          "bao-unseald",
+		Namespace:                    "openbao",
+		ServiceAccount:               "openbao",
+		NodeEvidenceTTLSeconds:       30,
+		NodeEvidenceRetentionSeconds: 3600,
+		APITimeoutSeconds:            5,
 	}
 
 	if err := config.Validate(); err != nil {
@@ -32,6 +36,9 @@ func TestConfigValidateAcceptsEnabledKubernetes(t *testing.T) {
 	}
 	if got := config.Kubernetes.NodeEvidenceTTL().Seconds(); got != 30 {
 		t.Fatalf("NodeEvidenceTTL seconds = %.0f, want 30", got)
+	}
+	if got := config.Kubernetes.NodeEvidenceRetention().Seconds(); got != 3600 {
+		t.Fatalf("NodeEvidenceRetention seconds = %.0f, want 3600", got)
 	}
 	if !config.Kubernetes.RequirePodBoundToken() {
 		t.Fatal("RequirePodBoundToken = false, want true")
@@ -68,6 +75,22 @@ func TestConfigValidateRejectsInvalidKubernetesTTL(t *testing.T) {
 	err := config.Validate()
 	if err == nil || !strings.Contains(err.Error(), "node_evidence_ttl_seconds") {
 		t.Fatalf("Validate error = %v, want node_evidence_ttl_seconds error", err)
+	}
+}
+
+func TestConfigValidateRejectsInvalidKubernetesRetention(t *testing.T) {
+	config := validBrokerConfig()
+	config.Kubernetes = KubernetesConfig{
+		Enabled:                      true,
+		TokenReviewAudience:          "bao-unseald",
+		Namespace:                    "openbao",
+		ServiceAccount:               "openbao",
+		NodeEvidenceRetentionSeconds: -1,
+	}
+
+	err := config.Validate()
+	if err == nil || !strings.Contains(err.Error(), "node_evidence_retention_seconds") {
+		t.Fatalf("Validate error = %v, want node_evidence_retention_seconds error", err)
 	}
 }
 

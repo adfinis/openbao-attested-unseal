@@ -147,6 +147,7 @@ func NewGRPCServer(config Config, service *Service, nodeEvidence NodeEvidenceSto
 			nodeEvidence,
 			config.Policy(),
 			config.Kubernetes.AllowFakeNodeEvidencePublish,
+			config.Kubernetes.NodeEvidenceRetention(),
 			auditStore,
 			audit,
 		),

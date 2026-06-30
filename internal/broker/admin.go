@@ -23,6 +23,7 @@ type AdminService struct {
 	nodeEvidence                 NodeEvidenceStore
 	auditStore                   adminAuditStore
 	audit                        *FileAuditSink
+	nodeEvidenceRetention        time.Duration
 	policyID                     string
 	allowFakeNodeEvidencePublish bool
 	clock                        func() time.Time
@@ -34,13 +35,21 @@ func NewAdminService(
 	policyID string,
 	allowFakeNodeEvidencePublish bool,
 ) AdminService {
-	return newAdminService(nodeEvidence, policyID, allowFakeNodeEvidencePublish, nil, nil)
+	return newAdminService(
+		nodeEvidence,
+		policyID,
+		allowFakeNodeEvidencePublish,
+		DefaultKubernetesNodeEvidenceRetention,
+		nil,
+		nil,
+	)
 }
 
 func newAdminService(
 	nodeEvidence NodeEvidenceStore,
 	policyID string,
 	allowFakeNodeEvidencePublish bool,
+	nodeEvidenceRetention time.Duration,
 	auditStore adminAuditStore,
 	audit *FileAuditSink,
 ) AdminService {
@@ -48,6 +57,7 @@ func newAdminService(
 		nodeEvidence:                 nodeEvidence,
 		auditStore:                   auditStore,
 		audit:                        audit,
+		nodeEvidenceRetention:        nodeEvidenceRetention,
 		policyID:                     policyID,
 		allowFakeNodeEvidencePublish: allowFakeNodeEvidencePublish,
 		clock:                        time.Now,
@@ -149,6 +159,20 @@ func (s AdminService) PublishNodeEvidence(
 			Decision: decision.Proto(),
 		}, nil
 	}
+	if err := s.pruneNodeEvidence(ctx, evidence.ClusterID); err != nil {
+		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INTERNAL, "node evidence cleanup failed")
+		s.auditNodeEvidence(
+			ctx,
+			adminOperationNodeEvidencePublish,
+			evidence.ClusterID,
+			evidence.NodeName,
+			evidence.EvidenceHash,
+			decision,
+		)
+		return &protocolv1.NodeEvidencePublishResponse{
+			Decision: decision.Proto(),
+		}, nil
+	}
 	if err := s.nodeEvidence.PutNodeEvidence(ctx, evidence); err != nil {
 		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, err.Error())
 		s.auditNodeEvidence(
@@ -201,6 +225,13 @@ func (s AdminService) ListNodeEvidence(
 			Decision: decision.Proto(),
 		}, nil
 	}
+	if err := s.pruneNodeEvidence(ctx, req.GetClusterId()); err != nil {
+		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INTERNAL, "node evidence cleanup failed")
+		s.auditNodeEvidence(ctx, adminOperationNodeEvidenceList, req.GetClusterId(), req.GetNodeName(), "", decision)
+		return &protocolv1.NodeEvidenceListResponse{
+			Decision: decision.Proto(),
+		}, nil
+	}
 	records, err := s.nodeEvidence.ListNodeEvidence(ctx, req.GetClusterId(), req.GetNodeName())
 	if err != nil {
 		if errors.Is(err, ErrNodeEvidenceNotFound) {
@@ -234,6 +265,18 @@ func (s AdminService) now() time.Time {
 		return time.Now()
 	}
 	return s.clock()
+}
+
+func (s AdminService) pruneNodeEvidence(ctx context.Context, clusterID string) error {
+	if s.nodeEvidence == nil {
+		return nil
+	}
+	retention := s.nodeEvidenceRetention
+	if retention <= 0 {
+		retention = DefaultKubernetesNodeEvidenceRetention
+	}
+	_, err := s.nodeEvidence.PruneNodeEvidence(ctx, clusterID, s.now().UTC().Add(-retention))
+	return err
 }
 
 func (s AdminService) auditNodeEvidence(

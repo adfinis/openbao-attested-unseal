@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -71,6 +72,7 @@ func TestAdminServiceAuditsNodeEvidencePublishAndList(t *testing.T) {
 		store,
 		config.Policy(),
 		true,
+		DefaultKubernetesNodeEvidenceRetention,
 		store,
 		NewFileAuditSink(config.AuditFilePath, false),
 	)
@@ -190,6 +192,55 @@ func TestAdminServiceRejectsFakePublishWhenDisabled(t *testing.T) {
 	}
 	if got := resp.GetDecision().GetErrors()[0].GetCode(); got != protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED {
 		t.Fatalf("publish error code = %s, want permission denied", got)
+	}
+}
+
+func TestAdminServicePrunesNodeEvidenceBeforeList(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	cache := NewMemoryNodeEvidenceCache()
+	service := newAdminService(cache, "development", true, time.Hour, nil, nil)
+	service.clock = func() time.Time { return now }
+
+	old := NodeEvidence{
+		ClusterID:    "prod-eu1",
+		NodeName:     "node-old",
+		NodeUID:      "old-node-uid",
+		Provider:     NodeEvidenceProviderFakeLocal,
+		EvidenceHash: "old-node-evidence-hash",
+		CollectedAt:  now.Add(-3 * time.Hour),
+		ExpiresAt:    now.Add(-2 * time.Hour),
+	}
+	if err := cache.PutNodeEvidence(context.Background(), old); err != nil {
+		t.Fatalf("PutNodeEvidence old returned error: %v", err)
+	}
+	recent := NodeEvidence{
+		ClusterID:    "prod-eu1",
+		NodeName:     testNodeName,
+		NodeUID:      "node-uid",
+		Provider:     NodeEvidenceProviderFakeLocal,
+		EvidenceHash: "recent-node-evidence-hash",
+		CollectedAt:  now.Add(-45 * time.Minute),
+		ExpiresAt:    now.Add(-30 * time.Minute),
+	}
+	if err := cache.PutNodeEvidence(context.Background(), recent); err != nil {
+		t.Fatalf("PutNodeEvidence recent returned error: %v", err)
+	}
+
+	list, err := service.ListNodeEvidence(context.Background(), &protocolv1.NodeEvidenceListRequest{
+		ClusterId: "prod-eu1",
+	})
+	if err != nil {
+		t.Fatalf("ListNodeEvidence returned error: %v", err)
+	}
+	if list.GetDecision().GetState() != protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW {
+		t.Fatalf("list decision = %s, want allow", list.GetDecision().GetState())
+	}
+	if len(list.GetEvidence()) != 1 || list.GetEvidence()[0].GetNodeName() != testNodeName {
+		t.Fatalf("list evidence = %#v, want only %s", list.GetEvidence(), testNodeName)
+	}
+	_, err = cache.NodeEvidence(context.Background(), "prod-eu1", "node-old")
+	if !errors.Is(err, ErrNodeEvidenceNotFound) {
+		t.Fatalf("old node evidence error = %v, want ErrNodeEvidenceNotFound", err)
 	}
 }
 

@@ -48,6 +48,7 @@ type NodeEvidenceStore interface {
 	NodeEvidenceWriter
 	NodeEvidence(ctx context.Context, clusterID string, nodeName string) (NodeEvidence, error)
 	ListNodeEvidence(ctx context.Context, clusterID string, nodeName string) ([]NodeEvidence, error)
+	PruneNodeEvidence(ctx context.Context, clusterID string, expiredBefore time.Time) (int64, error)
 }
 
 // MemoryNodeEvidenceCache is a process-local node evidence cache.
@@ -164,6 +165,34 @@ func (c *MemoryNodeEvidenceCache) ListNodeEvidence(
 		return nil, ErrNodeEvidenceNotFound
 	}
 	return out, nil
+}
+
+// PruneNodeEvidence deletes node evidence that expired before the supplied cutoff.
+func (c *MemoryNodeEvidenceCache) PruneNodeEvidence(
+	_ context.Context,
+	clusterID string,
+	expiredBefore time.Time,
+) (int64, error) {
+	if c == nil {
+		return 0, ErrNodeEvidenceNotFound
+	}
+	clusterID = strings.TrimSpace(clusterID)
+	if expiredBefore.IsZero() {
+		expiredBefore = time.Now()
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var removed int64
+	for key, evidence := range c.records {
+		if key.clusterID != clusterID {
+			continue
+		}
+		if evidence.ExpiresAt.Before(expiredBefore) {
+			delete(c.records, key)
+			removed++
+		}
+	}
+	return removed, nil
 }
 
 func normalizeNodeEvidence(evidence NodeEvidence) (NodeEvidence, error) {

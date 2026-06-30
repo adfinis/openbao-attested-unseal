@@ -90,6 +90,7 @@ The broker `kubernetes` block enables this profile:
     "namespace": "openbao",
     "service_account": "openbao",
     "node_evidence_ttl_seconds": 300,
+    "node_evidence_retention_seconds": 86400,
     "api_timeout_seconds": 10,
     "allow_unbound_service_account_tokens": false,
     "allow_fake_node_evidence_publish": false

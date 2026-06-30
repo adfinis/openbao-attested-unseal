@@ -1103,6 +1103,80 @@ func (s *SQLiteStore) ListNodeEvidence(
 	return records, nil
 }
 
+// PruneNodeEvidence deletes node evidence that expired before the supplied cutoff.
+func (s *SQLiteStore) PruneNodeEvidence(
+	ctx context.Context,
+	clusterID string,
+	expiredBefore time.Time,
+) (int64, error) {
+	clusterID = strings.TrimSpace(clusterID)
+	if expiredBefore.IsZero() {
+		expiredBefore = time.Now()
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin node evidence prune transaction: %w", err)
+	}
+	defer rollbackUnlessCommitted(tx)
+
+	rows, err := tx.QueryContext(
+		ctx,
+		`SELECT node_name, expires_at
+		 FROM node_evidence
+		 WHERE cluster_id = ?`,
+		clusterID,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("query node evidence for prune: %w", err)
+	}
+	var expired []string
+	for rows.Next() {
+		var nodeName string
+		var expiresRaw string
+		if err := rows.Scan(&nodeName, &expiresRaw); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("scan node evidence for prune: %w", err)
+		}
+		expiresAt, err := time.Parse(time.RFC3339Nano, expiresRaw)
+		if err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("parse node evidence prune expires_at: %w", err)
+		}
+		if expiresAt.Before(expiredBefore) {
+			expired = append(expired, nodeName)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, fmt.Errorf("iterate node evidence for prune: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("close node evidence prune rows: %w", err)
+	}
+
+	var removed int64
+	for _, nodeName := range expired {
+		result, err := tx.ExecContext(
+			ctx,
+			`DELETE FROM node_evidence WHERE cluster_id = ? AND node_name = ?`,
+			clusterID,
+			nodeName,
+		)
+		if err != nil {
+			return 0, fmt.Errorf("delete pruned node evidence: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("read pruned node evidence result: %w", err)
+		}
+		removed += affected
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit node evidence prune transaction: %w", err)
+	}
+	return removed, nil
+}
+
 // InsertAuditEvent stores an audit event in SQLite.
 func (s *SQLiteStore) InsertAuditEvent(ctx context.Context, event AuditEvent) error {
 	_, err := s.db.ExecContext(

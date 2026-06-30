@@ -28,6 +28,7 @@
     "namespace": "openbao",
     "service_account": "openbao",
     "node_evidence_ttl_seconds": 300,
+    "node_evidence_retention_seconds": 86400,
     "api_timeout_seconds": 10,
     "allow_unbound_service_account_tokens": false,
     "allow_fake_node_evidence_publish": false
@@ -49,7 +50,9 @@ traces and metrics to stdout for local validation.
 
 The optional `kubernetes` block is disabled by default. When enabled, the
 broker validates the TokenReview audience, namespace, service account, and node
-evidence freshness window. Pod-bound service account tokens are required unless
+evidence freshness window. `node_evidence_retention_seconds` controls how long
+stale node evidence remains available for diagnostics before admin publish/list
+operations prune it. Pod-bound service account tokens are required unless
 `allow_unbound_service_account_tokens` is explicitly set to `true`. With
 pod-bound tokens, the broker also performs an independent Pod API lookup and
 rejects evidence if the token pod UID or node name does not match the live Pod.

@@ -70,10 +70,15 @@ policy. Choose a value longer than the normal node evidence publishing interval
 and shorter than the operator's acceptable exposure window after node evidence
 publisher failure.
 
+`node_evidence_retention_seconds` controls how long stale evidence remains
+available for diagnostics after it expires. Broker admin publish/list operations
+prune evidence whose `expires_at` is older than this retention window.
+
 For example:
 
 - publisher interval: 60 seconds;
 - broker TTL: 300 seconds;
+- broker retention: 86400 seconds;
 - expected result: one or two missed publishes do not break restart, but stale
   node evidence denies after five minutes.
 

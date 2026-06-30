@@ -84,6 +84,64 @@ func TestSQLiteNodeEvidencePersistsAndLists(t *testing.T) {
 	}
 }
 
+func TestSQLiteNodeEvidencePrunesExpiredRecords(t *testing.T) {
+	config := testConfig(t)
+	store := newTestStore(t, config)
+	now := time.Unix(1_800_000_000, 0).UTC()
+	for _, evidence := range []NodeEvidence{
+		{
+			ClusterID:    config.ClusterID,
+			NodeName:     "node-old",
+			NodeUID:      "old-node-uid",
+			Provider:     NodeEvidenceProviderFakeLocal,
+			EvidenceHash: "old-node-evidence-hash",
+			CollectedAt:  now.Add(-3 * time.Hour),
+			ExpiresAt:    now.Add(-2 * time.Hour),
+		},
+		{
+			ClusterID:    config.ClusterID,
+			NodeName:     "node-recent-stale",
+			NodeUID:      "recent-stale-node-uid",
+			Provider:     NodeEvidenceProviderFakeLocal,
+			EvidenceHash: "recent-stale-node-evidence-hash",
+			CollectedAt:  now.Add(-45 * time.Minute),
+			ExpiresAt:    now.Add(-30 * time.Minute),
+		},
+		{
+			ClusterID:    config.ClusterID,
+			NodeName:     "node-fresh",
+			NodeUID:      "fresh-node-uid",
+			Provider:     NodeEvidenceProviderFakeLocal,
+			EvidenceHash: "fresh-node-evidence-hash",
+			CollectedAt:  now,
+			ExpiresAt:    now.Add(time.Minute),
+		},
+	} {
+		if err := store.PutNodeEvidence(context.Background(), evidence); err != nil {
+			t.Fatalf("PutNodeEvidence %s returned error: %v", evidence.NodeName, err)
+		}
+	}
+
+	removed, err := store.PruneNodeEvidence(context.Background(), config.ClusterID, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("PruneNodeEvidence returned error: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("PruneNodeEvidence removed = %d, want 1", removed)
+	}
+	_, err = store.NodeEvidence(context.Background(), config.ClusterID, "node-old")
+	if !errors.Is(err, ErrNodeEvidenceNotFound) {
+		t.Fatalf("old NodeEvidence error = %v, want ErrNodeEvidenceNotFound", err)
+	}
+	list, err := store.ListNodeEvidence(context.Background(), config.ClusterID, "")
+	if err != nil {
+		t.Fatalf("ListNodeEvidence returned error: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("list length = %d, want 2", len(list))
+	}
+}
+
 func TestChallengeExpiry(t *testing.T) {
 	config := testConfig(t)
 	store := newTestStore(t, config)
