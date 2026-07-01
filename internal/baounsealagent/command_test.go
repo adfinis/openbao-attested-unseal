@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -23,6 +24,8 @@ const (
 	testStatus     = "fresh"
 	testFormatJSON = "json"
 )
+
+var errPublishFailed = errors.New("publish failed")
 
 func TestPublishOnceJSON(t *testing.T) {
 	address, cache := startAdminBrokerTestServer(t)
@@ -86,7 +89,7 @@ func TestPublishOnceUsesNodeEnvironment(t *testing.T) {
 func TestPublishOnceRejectsMissingNodeName(t *testing.T) {
 	t.Setenv("NODE_NAME", "")
 
-	err := runCommand(
+	err := runExecuteCommand(
 		"publish-once",
 		"-addr", "127.0.0.1:1",
 		"-plaintext",
@@ -98,7 +101,106 @@ func TestPublishOnceRejectsMissingNodeName(t *testing.T) {
 	}
 }
 
-func TestUsageListsPublishOnce(t *testing.T) {
+func TestRunLoopPublishesUntilCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	now := time.Unix(1_800_000_000, 0).UTC()
+	var events []runEvent
+	publishCount := 0
+	waitCount := 0
+	loop := agentRunLoop{
+		interval: time.Second,
+		publish: func(context.Context) (publishOnceOutput, error) {
+			publishCount++
+			return publishOnceOutput{
+				ClusterID:    testClusterID,
+				NodeName:     testNodeName,
+				NodeUID:      testNodeUID,
+				ProviderID:   broker.NodeEvidenceProviderFakeLocal,
+				EvidenceHash: "hash",
+				ExpiresAt:    now.Add(time.Minute).Format(time.RFC3339),
+				Status:       testStatus,
+				Decision:     testDecision,
+			}, nil
+		},
+		write: func(event runEvent) error {
+			events = append(events, event)
+			return nil
+		},
+		wait: func(ctx context.Context, _ time.Duration) error {
+			waitCount++
+			if waitCount == 2 {
+				cancel()
+				return context.Canceled
+			}
+			return ctx.Err()
+		},
+		now: func() time.Time { return now },
+	}
+
+	err := loop.Run(ctx, publishOptionsFixture())
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if publishCount != 2 || len(events) != 2 {
+		t.Fatalf("published %d times with %d events, want 2 each", publishCount, len(events))
+	}
+	for _, event := range events {
+		if event.Event != runEventPublished ||
+			event.ClusterID != testClusterID ||
+			event.NodeName != testNodeName ||
+			event.Attempt == 0 {
+			t.Fatalf("event = %#v, want successful publish event", event)
+		}
+	}
+}
+
+func TestRunLoopStopsAfterMaxFailures(t *testing.T) {
+	var events []runEvent
+	loop := agentRunLoop{
+		interval:    time.Second,
+		maxFailures: 2,
+		publish: func(context.Context) (publishOnceOutput, error) {
+			return publishOnceOutput{}, errPublishFailed
+		},
+		write: func(event runEvent) error {
+			events = append(events, event)
+			return nil
+		},
+		wait: func(context.Context, time.Duration) error { return nil },
+	}
+
+	err := loop.Run(context.Background(), publishOptionsFixture())
+	if !errors.Is(err, errPublishFailed) {
+		t.Fatalf("Run error = %v, want publish failure", err)
+	}
+	if got := cli.ProcessExitCode(err); got != int(cli.ExitRuntime) {
+		t.Fatalf("exit code = %d, want %d", got, cli.ExitRuntime)
+	}
+	if len(events) != 2 ||
+		events[0].FailureCount != 1 ||
+		events[1].FailureCount != 2 ||
+		events[1].Event != runEventFailed {
+		t.Fatalf("events = %#v, want two failure events", events)
+	}
+}
+
+func TestParseRunOptionsRejectsIntervalAtTTL(t *testing.T) {
+	var stderr bytes.Buffer
+	_, err := parseRunOptions([]string{
+		"-addr", "127.0.0.1:8443",
+		"-plaintext",
+		"-cluster-id", testClusterID,
+		"-node-name", testNodeName,
+		"-ttl", "1m",
+		"-interval", "1m",
+	}, &stderr)
+	if got := cli.ProcessExitCode(err); got != int(cli.ExitUsage) {
+		t.Fatalf("exit code = %d, want %d", got, cli.ExitUsage)
+	}
+}
+
+func TestUsageListsAgentCommands(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	err := Execute(version.Info{Version: "test"}, []string{"help"}, &stdout, &stderr)
@@ -107,6 +209,9 @@ func TestUsageListsPublishOnce(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "bao-unseal-agent publish-once") {
 		t.Fatalf("usage output = %q, want publish-once command", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "bao-unseal-agent run") {
+		t.Fatalf("usage output = %q, want run command", stdout.String())
 	}
 }
 
@@ -123,10 +228,23 @@ func runJSON(t *testing.T, out any, args ...string) {
 	}
 }
 
-func runCommand(args ...string) error {
+func runExecuteCommand(args ...string) error {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	return Execute(version.Info{Version: "test"}, args, &stdout, &stderr)
+}
+
+func publishOptionsFixture() publishOnceOptions {
+	return publishOnceOptions{
+		address:    "127.0.0.1:8443",
+		clusterID:  testClusterID,
+		nodeName:   testNodeName,
+		nodeUID:    testNodeUID,
+		providerID: broker.NodeEvidenceProviderFakeLocal,
+		ttl:        time.Minute,
+		timeout:    time.Second,
+		format:     testFormatJSON,
+	}
 }
 
 func startAdminBrokerTestServer(t *testing.T) (string, *broker.MemoryNodeEvidenceCache) {

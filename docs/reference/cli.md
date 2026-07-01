@@ -53,6 +53,20 @@ bao-unseal-agent publish-once -addr 127.0.0.1:8443 -plaintext \
   -cluster-id prod-eu1 -node-name kind-worker
 ```
 
+Use `run` when the agent should keep node evidence fresh:
+
+```sh
+bao-unseal-agent run -addr 127.0.0.1:8443 -plaintext \
+  -cluster-id prod-eu1 -node-name kind-worker \
+  -ttl 5m -interval 1m
+```
+
+`run` publishes immediately, then repeats every `-interval`. The interval must
+be shorter than the evidence `-ttl`. By default the agent keeps retrying after
+publish failures; set `-max-failures` to exit after a bounded number of
+consecutive failures. With `-format json`, `run` emits newline-delimited JSON
+events.
+
 `k8s publish-node` is a beta lab helper. It publishes synthetic `fake-local`
 node evidence to a broker admin API so kind and local tests can exercise node
 evidence policy before a production node attestation agent exists. Use TLS by

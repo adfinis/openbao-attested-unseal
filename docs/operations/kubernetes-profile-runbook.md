@@ -89,6 +89,18 @@ For example:
 The fake/local fixture path is useful for testing this behavior but is not a
 security control.
 
+In local labs, `bao-unseal-agent run` can maintain the fake/local record:
+
+```sh
+bao-unseal-agent run \
+  -addr 127.0.0.1:8443 \
+  -plaintext \
+  -cluster-id prod-eu1 \
+  -node-name kind-worker \
+  -ttl 5m \
+  -interval 1m
+```
+
 During local or kind testing, seed fake node evidence explicitly:
 
 ```sh

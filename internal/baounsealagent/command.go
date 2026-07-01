@@ -8,7 +8,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/adfinis/openbao-attested-unseal/internal/broker"
@@ -24,6 +27,9 @@ import (
 const (
 	formatText = "text"
 	formatJSON = "json"
+
+	commandPublishOnce = "publish-once"
+	commandRun         = "run"
 )
 
 type publishOnceOptions struct {
@@ -40,6 +46,22 @@ type publishOnceOptions struct {
 	ttl            time.Duration
 	timeout        time.Duration
 	format         string
+}
+
+type publishFlagValues struct {
+	address        *string
+	plaintext      *bool
+	caCertPath     *string
+	tlsServerName  *string
+	clientCertPath *string
+	clientKeyPath  *string
+	clusterID      *string
+	nodeName       *string
+	nodeUID        *string
+	providerID     *string
+	ttl            *time.Duration
+	timeout        *time.Duration
+	format         *string
 }
 
 type publishOnceOutput struct {
@@ -70,8 +92,10 @@ func Execute(info version.Info, args []string, stdout io.Writer, stderr io.Write
 	case "version":
 		printVersion(stdout, info)
 		return nil
-	case "publish-once":
+	case commandPublishOnce:
 		return publishOnceCommand(args[1:], stdout, stderr)
+	case commandRun:
+		return runCommand(args[1:], stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
 		return cli.WithExitCode(cli.ExitUsage, fmt.Errorf("unknown command %q", args[0]))
@@ -97,75 +121,106 @@ func publishOnceCommand(args []string, stdout io.Writer, stderr io.Writer) error
 }
 
 func parsePublishOnceOptions(args []string, stderr io.Writer) (publishOnceOptions, error) {
-	flags := flag.NewFlagSet("publish-once", flag.ContinueOnError)
+	flags := flag.NewFlagSet(commandPublishOnce, flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	address := flags.String("addr", config.EnvOrDefault("BAO_UNSEALD_ADDR", "127.0.0.1:8443"), "bao-unseald gRPC address.")
-	plaintext := flags.Bool("plaintext", false, "Use plaintext gRPC for local kind/lab deployments.")
-	caCertPath := flags.String("ca-cert", "", "Optional PEM CA certificate for broker TLS.")
-	tlsServerName := flags.String("tls-server-name", "", "Optional TLS server name override.")
-	clientCertPath := flags.String("client-cert", "", "Optional PEM client certificate for broker mTLS.")
-	clientKeyPath := flags.String("client-key", "", "Optional PEM client key for broker mTLS.")
-	clusterID := flags.String(
-		"cluster-id",
-		config.EnvOrDefault("BAO_UNSEAL_CLUSTER_ID", "prod-eu1"),
-		"Cluster identifier.",
-	)
-	nodeName := flags.String("node-name", config.EnvOrDefault("NODE_NAME", ""), "Kubernetes node name.")
-	nodeUID := flags.String("node-uid", config.EnvOrDefault("NODE_UID", ""), "Optional Kubernetes node UID.")
-	providerID := flags.String("provider-id", broker.NodeEvidenceProviderFakeLocal, "Node evidence provider identifier.")
-	ttl := flags.Duration("ttl", broker.DefaultKubernetesNodeEvidenceTTL, "Node evidence TTL.")
-	timeout := flags.Duration("timeout", broker.DefaultKubernetesAPITimeout, "Broker request timeout.")
-	format := flags.String("format", formatText, "Output format: text or json.")
+	values := addPublishFlags(flags)
 	if err := flags.Parse(args); err != nil {
 		return publishOnceOptions{}, cli.WithExitCode(cli.ExitUsage, err)
 	}
-	if err := validateFormat(*format); err != nil {
+	return publishOptionsFromFlags(values)
+}
+
+func addPublishFlags(flags *flag.FlagSet) publishFlagValues {
+	return publishFlagValues{
+		address: flags.String(
+			"addr",
+			config.EnvOrDefault("BAO_UNSEALD_ADDR", "127.0.0.1:8443"),
+			"bao-unseald gRPC address.",
+		),
+		plaintext:      flags.Bool("plaintext", false, "Use plaintext gRPC for local kind/lab deployments."),
+		caCertPath:     flags.String("ca-cert", "", "Optional PEM CA certificate for broker TLS."),
+		tlsServerName:  flags.String("tls-server-name", "", "Optional TLS server name override."),
+		clientCertPath: flags.String("client-cert", "", "Optional PEM client certificate for broker mTLS."),
+		clientKeyPath:  flags.String("client-key", "", "Optional PEM client key for broker mTLS."),
+		clusterID: flags.String(
+			"cluster-id",
+			config.EnvOrDefault("BAO_UNSEAL_CLUSTER_ID", "prod-eu1"),
+			"Cluster identifier.",
+		),
+		nodeName:   flags.String("node-name", config.EnvOrDefault("NODE_NAME", ""), "Kubernetes node name."),
+		nodeUID:    flags.String("node-uid", config.EnvOrDefault("NODE_UID", ""), "Optional Kubernetes node UID."),
+		providerID: flags.String("provider-id", broker.NodeEvidenceProviderFakeLocal, "Node evidence provider identifier."),
+		ttl:        flags.Duration("ttl", broker.DefaultKubernetesNodeEvidenceTTL, "Node evidence TTL."),
+		timeout:    flags.Duration("timeout", broker.DefaultKubernetesAPITimeout, "Broker request timeout."),
+		format:     flags.String("format", formatText, "Output format: text or json."),
+	}
+}
+
+func publishOptionsFromFlags(values publishFlagValues) (publishOnceOptions, error) {
+	if err := validateFormat(*values.format); err != nil {
 		return publishOnceOptions{}, err
 	}
-	if strings.TrimSpace(*address) == "" ||
-		strings.TrimSpace(*clusterID) == "" ||
-		strings.TrimSpace(*nodeName) == "" {
+	if strings.TrimSpace(*values.address) == "" ||
+		strings.TrimSpace(*values.clusterID) == "" ||
+		strings.TrimSpace(*values.nodeName) == "" {
 		return publishOnceOptions{}, cli.WithExitCode(
 			cli.ExitUsage,
 			errors.New("-addr, -cluster-id, and -node-name are required"),
 		)
 	}
-	if strings.TrimSpace(*providerID) != broker.NodeEvidenceProviderFakeLocal {
+	if strings.TrimSpace(*values.providerID) != broker.NodeEvidenceProviderFakeLocal {
 		return publishOnceOptions{}, cli.WithExitCode(
 			cli.ExitUsage,
-			fmt.Errorf("unsupported node evidence provider %q", *providerID),
+			fmt.Errorf("unsupported node evidence provider %q", *values.providerID),
 		)
 	}
-	if *ttl <= 0 {
+	if *values.ttl <= 0 {
 		return publishOnceOptions{}, cli.WithExitCode(cli.ExitUsage, errors.New("-ttl must be greater than zero"))
 	}
-	if *timeout <= 0 {
+	if *values.timeout <= 0 {
 		return publishOnceOptions{}, cli.WithExitCode(cli.ExitUsage, errors.New("-timeout must be greater than zero"))
 	}
-	if (strings.TrimSpace(*clientCertPath) == "") != (strings.TrimSpace(*clientKeyPath) == "") {
+	if (strings.TrimSpace(*values.clientCertPath) == "") != (strings.TrimSpace(*values.clientKeyPath) == "") {
 		return publishOnceOptions{}, cli.WithExitCode(
 			cli.ExitUsage,
 			errors.New("-client-cert and -client-key must be provided together"),
 		)
 	}
 	return publishOnceOptions{
-		address:        strings.TrimSpace(*address),
-		plaintext:      *plaintext,
-		caCertPath:     strings.TrimSpace(*caCertPath),
-		tlsServerName:  strings.TrimSpace(*tlsServerName),
-		clientCertPath: strings.TrimSpace(*clientCertPath),
-		clientKeyPath:  strings.TrimSpace(*clientKeyPath),
-		clusterID:      strings.TrimSpace(*clusterID),
-		nodeName:       strings.TrimSpace(*nodeName),
-		nodeUID:        strings.TrimSpace(*nodeUID),
-		providerID:     strings.TrimSpace(*providerID),
-		ttl:            *ttl,
-		timeout:        *timeout,
-		format:         *format,
+		address:        strings.TrimSpace(*values.address),
+		plaintext:      *values.plaintext,
+		caCertPath:     strings.TrimSpace(*values.caCertPath),
+		tlsServerName:  strings.TrimSpace(*values.tlsServerName),
+		clientCertPath: strings.TrimSpace(*values.clientCertPath),
+		clientKeyPath:  strings.TrimSpace(*values.clientKeyPath),
+		clusterID:      strings.TrimSpace(*values.clusterID),
+		nodeName:       strings.TrimSpace(*values.nodeName),
+		nodeUID:        strings.TrimSpace(*values.nodeUID),
+		providerID:     strings.TrimSpace(*values.providerID),
+		ttl:            *values.ttl,
+		timeout:        *values.timeout,
+		format:         *values.format,
 	}, nil
 }
 
 func publishOnce(options publishOnceOptions) (publishOnceOutput, error) {
+	conn, err := brokerAdminConn(options)
+	if err != nil {
+		return publishOnceOutput{}, err
+	}
+	defer func() { _ = conn.Close() }()
+
+	ctx, cancel := context.WithTimeout(cli.ProcessContext(), options.timeout)
+	defer cancel()
+	client := protocolv1.NewAdminServiceClient(conn)
+	provider, err := publishOnceProvider(options.providerID)
+	if err != nil {
+		return publishOnceOutput{}, err
+	}
+	return publishWithClient(ctx, client, provider, options)
+}
+
+func brokerAdminConn(options publishOnceOptions) (*grpc.ClientConn, error) {
 	dialOptions, err := brokeradmin.DialOptions(brokeradmin.ClientOptions{
 		Plaintext:      options.plaintext,
 		CACertPath:     options.caCertPath,
@@ -174,35 +229,39 @@ func publishOnce(options publishOnceOptions) (publishOnceOutput, error) {
 		ClientKeyPath:  options.clientKeyPath,
 	})
 	if err != nil {
-		return publishOnceOutput{}, cli.WithExitCode(cli.ExitConfig, err)
+		return nil, cli.WithExitCode(cli.ExitConfig, err)
 	}
 	conn, err := grpc.NewClient(options.address, dialOptions...)
 	if err != nil {
-		return publishOnceOutput{}, cli.WithExitCode(cli.ExitConfig, fmt.Errorf("create broker client: %w", err))
+		return nil, cli.WithExitCode(cli.ExitConfig, fmt.Errorf("create broker client: %w", err))
 	}
-	defer func() { _ = conn.Close() }()
+	return conn, nil
+}
 
-	ctx, cancel := context.WithTimeout(cli.ProcessContext(), options.timeout)
-	defer cancel()
+func publishWithClient(
+	ctx context.Context,
+	client protocolv1.AdminServiceClient,
+	provider nodeagent.Provider,
+	options publishOnceOptions,
+) (publishOnceOutput, error) {
 	writer := &brokeradmin.NodeEvidenceWriter{
-		Client: protocolv1.NewAdminServiceClient(conn),
-	}
-	provider, err := publishOnceProvider(options.providerID)
-	if err != nil {
-		return publishOnceOutput{}, err
+		Client: client,
 	}
 	publisher := nodeagent.Publisher{
 		Writer:   writer,
 		Provider: provider,
 	}
-	_, err = publisher.Publish(ctx, nodeagent.PublishRequest{
+	_, err := publisher.Publish(ctx, nodeagent.PublishRequest{
 		ClusterID: options.clusterID,
 		NodeName:  options.nodeName,
 		NodeUID:   options.nodeUID,
 		TTL:       options.ttl,
 	})
-	if err != nil {
+	if err != nil && ctx.Err() == nil {
 		return publishOnceOutput{}, publishOnceExitError(err)
+	}
+	if err != nil {
+		return publishOnceOutput{}, err
 	}
 	return publishOnceOutputFromProto(writer.Evidence, writer.Decision), nil
 }
@@ -274,6 +333,7 @@ func printUsage(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "  bao-unseal-agent help")
 	_, _ = fmt.Fprintln(out, "  bao-unseal-agent version")
 	_, _ = fmt.Fprintln(out, "  bao-unseal-agent publish-once -cluster-id prod-eu1 -node-name kind-worker")
+	_, _ = fmt.Fprintln(out, "  bao-unseal-agent run -cluster-id prod-eu1 -node-name kind-worker")
 }
 
 func printVersion(out io.Writer, info version.Info) {
@@ -281,4 +341,8 @@ func printVersion(out io.Writer, info version.Info) {
 	_, _ = fmt.Fprintf(out, "commit: %s\n", info.Commit)
 	_, _ = fmt.Fprintf(out, "buildDate: %s\n", info.BuildDate)
 	_, _ = fmt.Fprintf(out, "dirty: %s\n", info.Dirty)
+}
+
+func signalContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(cli.ProcessContext(), os.Interrupt, syscall.SIGTERM)
 }
