@@ -7,12 +7,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/adfinis/openbao-attested-unseal/internal/broker"
+	"github.com/adfinis/openbao-attested-unseal/internal/nodeevidence"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 )
 
 // ErrPublishNodeEvidence indicates a broker admin node evidence publish RPC failed.
 var ErrPublishNodeEvidence = errors.New("publish node evidence")
+
+// ErrChallengeNodeEvidence indicates a broker admin challenge RPC failed.
+var ErrChallengeNodeEvidence = errors.New("challenge node evidence")
 
 // DecisionDeniedError indicates a broker admin operation returned a deny decision.
 type DecisionDeniedError struct {
@@ -32,41 +35,101 @@ func (e DecisionDeniedError) Error() string {
 	return fmt.Sprintf("broker denied %s: %s", operation, strings.Join(e.Messages, "; "))
 }
 
-// NodeEvidenceWriter publishes node evidence through the broker admin API.
-type NodeEvidenceWriter struct {
+// NodeEvidenceClient completes the broker challenge and submission protocol.
+type NodeEvidenceClient struct {
 	Client   protocolv1.AdminServiceClient
 	Evidence *protocolv1.NodeEvidenceRecord
 	Decision *protocolv1.PolicyDecision
 }
 
-// PutNodeEvidence publishes one node evidence record.
-func (w *NodeEvidenceWriter) PutNodeEvidence(
+// RequestNodeEvidenceChallenge requests one single-use broker challenge.
+func (w *NodeEvidenceClient) RequestNodeEvidenceChallenge(
 	ctx context.Context,
-	evidence broker.NodeEvidence,
-) error {
+	request nodeevidence.ChallengeRequest,
+) (nodeevidence.Challenge, error) {
 	if w == nil || w.Client == nil {
-		return fmt.Errorf("%w: admin client is required", ErrPublishNodeEvidence)
+		return nodeevidence.Challenge{}, fmt.Errorf("%w: admin client is required", ErrChallengeNodeEvidence)
+	}
+	request, err := nodeevidence.NormalizeChallengeRequest(request)
+	if err != nil {
+		return nodeevidence.Challenge{}, err
+	}
+	response, err := w.Client.ChallengeNodeEvidence(ctx, &protocolv1.NodeEvidenceChallengeRequest{
+		ClusterId:  request.ClusterID,
+		NodeName:   request.NodeName,
+		NodeUid:    request.NodeUID,
+		ProviderId: request.Provider,
+	})
+	if err != nil {
+		return nodeevidence.Challenge{}, fmt.Errorf("%w: %w", ErrChallengeNodeEvidence, err)
+	}
+	w.Decision = response.GetDecision()
+	if err := RequireAllowDecision(response.GetDecision(), "challenge node evidence"); err != nil {
+		return nodeevidence.Challenge{}, err
+	}
+	return nodeevidence.NormalizeChallenge(nodeevidence.Challenge{
+		ID:        response.GetChallengeId(),
+		Nonce:     response.GetNonce(),
+		ExpiresAt: time.Unix(response.GetExpiresUnixSeconds(), 0).UTC(),
+	})
+}
+
+// SubmitNodeEvidence submits untrusted evidence and returns the broker-verified record.
+func (w *NodeEvidenceClient) SubmitNodeEvidence(
+	ctx context.Context,
+	submission nodeevidence.Submission,
+) (nodeevidence.Evidence, error) {
+	if w == nil || w.Client == nil {
+		return nodeevidence.Evidence{}, fmt.Errorf("%w: admin client is required", ErrPublishNodeEvidence)
+	}
+	submission, err := nodeevidence.NormalizeSubmission(submission)
+	if err != nil {
+		return nodeevidence.Evidence{}, err
 	}
 	response, err := w.Client.PublishNodeEvidence(ctx, &protocolv1.NodeEvidencePublishRequest{
-		Evidence: &protocolv1.NodeEvidenceRecord{
-			ClusterId:            evidence.ClusterID,
-			NodeName:             evidence.NodeName,
-			NodeUid:              evidence.NodeUID,
-			ProviderId:           evidence.Provider,
-			EvidenceHash:         evidence.EvidenceHash,
-			CollectedUnixSeconds: evidence.CollectedAt.Unix(),
-			ExpiresUnixSeconds:   evidence.ExpiresAt.Unix(),
+		Submission: &protocolv1.NodeEvidenceSubmission{
+			ClusterId:           submission.ClusterID,
+			NodeName:            submission.NodeName,
+			NodeUid:             submission.NodeUID,
+			ProviderId:          submission.Provider,
+			Format:              submission.Format,
+			Payload:             submission.Payload,
+			ChallengeId:         submission.ChallengeID,
+			RequestedTtlSeconds: durationSecondsCeiling(submission.RequestedTTL),
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrPublishNodeEvidence, err)
+		return nodeevidence.Evidence{}, fmt.Errorf("%w: %w", ErrPublishNodeEvidence, err)
 	}
 	w.Evidence = response.GetEvidence()
 	w.Decision = response.GetDecision()
 	if err := RequireAllowDecision(response.GetDecision(), "publish node evidence"); err != nil {
-		return err
+		return nodeevidence.Evidence{}, err
 	}
-	return nil
+	return nodeEvidenceFromProto(response.GetEvidence())
+}
+
+func nodeEvidenceFromProto(record *protocolv1.NodeEvidenceRecord) (nodeevidence.Evidence, error) {
+	if record == nil {
+		return nodeevidence.Evidence{}, fmt.Errorf("%w: response record is required", ErrPublishNodeEvidence)
+	}
+	return nodeevidence.Normalize(nodeevidence.Evidence{
+		ClusterID:    record.GetClusterId(),
+		NodeName:     record.GetNodeName(),
+		NodeUID:      record.GetNodeUid(),
+		Provider:     record.GetProviderId(),
+		EvidenceHash: record.GetEvidenceHash(),
+		CollectedAt:  time.Unix(record.GetCollectedUnixSeconds(), 0).UTC(),
+		ExpiresAt:    time.Unix(record.GetExpiresUnixSeconds(), 0).UTC(),
+	})
+}
+
+func durationSecondsCeiling(duration time.Duration) int64 {
+	seconds := duration / time.Second
+	if duration%time.Second != 0 {
+		seconds++
+	}
+	return int64(seconds)
 }
 
 // RequireAllowDecision returns a denial error unless the policy decision is allow.

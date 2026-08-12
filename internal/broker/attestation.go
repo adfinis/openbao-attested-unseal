@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"strings"
 
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 )
@@ -35,5 +36,5 @@ func (DevelopmentEvidenceVerifier) VerifyEvidence(
 	_ context.Context,
 	evidence *protocolv1.EvidenceEnvelope,
 ) (VerifiedEvidence, error) {
-	return VerifiedEvidence{Subject: subjectFromEvidence(evidence)}, nil
+	return VerifiedEvidence{Subject: strings.TrimSpace(string(evidence.GetPayload()))}, nil
 }

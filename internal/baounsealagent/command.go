@@ -10,16 +10,18 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/adfinis/openbao-attested-unseal/internal/broker"
 	"github.com/adfinis/openbao-attested-unseal/internal/brokeradmin"
 	"github.com/adfinis/openbao-attested-unseal/internal/cli"
 	"github.com/adfinis/openbao-attested-unseal/internal/config"
 	"github.com/adfinis/openbao-attested-unseal/internal/nodeagent"
+	"github.com/adfinis/openbao-attested-unseal/internal/nodeevidence"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
+	tpmlocal "github.com/adfinis/openbao-attested-unseal/internal/tpm"
 	"github.com/adfinis/openbao-attested-unseal/internal/version"
 	"google.golang.org/grpc"
 )
@@ -43,6 +45,10 @@ type publishOnceOptions struct {
 	nodeName       string
 	nodeUID        string
 	providerID     string
+	tpmDevice      string
+	tpmPCRBank     string
+	tpmPCRs        []int
+	platformHint   string
 	ttl            time.Duration
 	timeout        time.Duration
 	format         string
@@ -59,6 +65,10 @@ type publishFlagValues struct {
 	nodeName       *string
 	nodeUID        *string
 	providerID     *string
+	tpmDevice      *string
+	tpmPCRBank     *string
+	tpmPCRsRaw     *string
+	platformHint   *string
 	ttl            *time.Duration
 	timeout        *time.Duration
 	format         *string
@@ -149,10 +159,18 @@ func addPublishFlags(flags *flag.FlagSet) publishFlagValues {
 		),
 		nodeName:   flags.String("node-name", config.EnvOrDefault("NODE_NAME", ""), "Kubernetes node name."),
 		nodeUID:    flags.String("node-uid", config.EnvOrDefault("NODE_UID", ""), "Optional Kubernetes node UID."),
-		providerID: flags.String("provider-id", broker.NodeEvidenceProviderFakeLocal, "Node evidence provider identifier."),
-		ttl:        flags.Duration("ttl", broker.DefaultKubernetesNodeEvidenceTTL, "Node evidence TTL."),
-		timeout:    flags.Duration("timeout", broker.DefaultKubernetesAPITimeout, "Broker request timeout."),
-		format:     flags.String("format", formatText, "Output format: text or json."),
+		providerID: flags.String("provider-id", nodeevidence.ProviderFakeLocal, "Node evidence provider identifier."),
+		tpmDevice:  flags.String("tpm-device", "", "TPM device path or swtpm Unix socket for generic TPM evidence."),
+		tpmPCRBank: flags.String("tpm-pcr-bank", tpmlocal.HashSHA256, "TPM PCR bank for generic TPM evidence."),
+		tpmPCRsRaw: flags.String("tpm-pcrs", "7", "Comma-separated TPM PCR indexes for generic TPM evidence."),
+		platformHint: flags.String(
+			"platform-hint",
+			"",
+			"Optional platform hint recorded in generic TPM evidence.",
+		),
+		ttl:     flags.Duration("ttl", brokeradmin.DefaultNodeEvidenceTTL, "Node evidence TTL."),
+		timeout: flags.Duration("timeout", brokeradmin.DefaultRequestTimeout, "Broker request timeout."),
+		format:  flags.String("format", formatText, "Output format: text or json."),
 	}
 }
 
@@ -168,11 +186,18 @@ func publishOptionsFromFlags(values publishFlagValues) (publishOnceOptions, erro
 			errors.New("-addr, -cluster-id, and -node-name are required"),
 		)
 	}
-	if strings.TrimSpace(*values.providerID) != broker.NodeEvidenceProviderFakeLocal {
+	providerID := strings.TrimSpace(*values.providerID)
+	switch providerID {
+	case nodeevidence.ProviderFakeLocal, nodeevidence.ProviderTPM2Quote:
+	default:
 		return publishOnceOptions{}, cli.WithExitCode(
 			cli.ExitUsage,
 			fmt.Errorf("unsupported node evidence provider %q", *values.providerID),
 		)
+	}
+	tpmPCRs, err := parseAgentPCRIndexes(*values.tpmPCRsRaw)
+	if err != nil {
+		return publishOnceOptions{}, err
 	}
 	if *values.ttl <= 0 {
 		return publishOnceOptions{}, cli.WithExitCode(cli.ExitUsage, errors.New("-ttl must be greater than zero"))
@@ -196,7 +221,11 @@ func publishOptionsFromFlags(values publishFlagValues) (publishOnceOptions, erro
 		clusterID:      strings.TrimSpace(*values.clusterID),
 		nodeName:       strings.TrimSpace(*values.nodeName),
 		nodeUID:        strings.TrimSpace(*values.nodeUID),
-		providerID:     strings.TrimSpace(*values.providerID),
+		providerID:     providerID,
+		tpmDevice:      strings.TrimSpace(*values.tpmDevice),
+		tpmPCRBank:     strings.TrimSpace(*values.tpmPCRBank),
+		tpmPCRs:        tpmPCRs,
+		platformHint:   strings.TrimSpace(*values.platformHint),
 		ttl:            *values.ttl,
 		timeout:        *values.timeout,
 		format:         *values.format,
@@ -213,7 +242,7 @@ func publishOnce(options publishOnceOptions) (publishOnceOutput, error) {
 	ctx, cancel := context.WithTimeout(cli.ProcessContext(), options.timeout)
 	defer cancel()
 	client := protocolv1.NewAdminServiceClient(conn)
-	provider, err := publishOnceProvider(options.providerID)
+	provider, err := publishOnceProvider(options)
 	if err != nil {
 		return publishOnceOutput{}, err
 	}
@@ -244,11 +273,11 @@ func publishWithClient(
 	provider nodeagent.Provider,
 	options publishOnceOptions,
 ) (publishOnceOutput, error) {
-	writer := &brokeradmin.NodeEvidenceWriter{
+	writer := &brokeradmin.NodeEvidenceClient{
 		Client: client,
 	}
 	publisher := nodeagent.Publisher{
-		Writer:   writer,
+		Client:   writer,
 		Provider: provider,
 	}
 	_, err := publisher.Publish(ctx, nodeagent.PublishRequest{
@@ -266,14 +295,20 @@ func publishWithClient(
 	return publishOnceOutputFromProto(writer.Evidence, writer.Decision), nil
 }
 
-func publishOnceProvider(providerID string) (nodeagent.Provider, error) {
-	switch providerID {
-	case broker.NodeEvidenceProviderFakeLocal:
+func publishOnceProvider(options publishOnceOptions) (nodeagent.Provider, error) {
+	switch options.providerID {
+	case nodeevidence.ProviderFakeLocal:
 		return nodeagent.FakeLocalProvider{}, nil
+	case nodeevidence.ProviderTPM2Quote:
+		return nodeagent.TPMProvider{
+			Device:       tpmlocal.Device{Path: options.tpmDevice},
+			Selection:    tpmlocal.PCRSelection{Hash: options.tpmPCRBank, PCRs: options.tpmPCRs},
+			PlatformHint: options.platformHint,
+		}, nil
 	default:
 		return nil, cli.WithExitCode(
 			cli.ExitUsage,
-			fmt.Errorf("unsupported node evidence provider %q", providerID),
+			fmt.Errorf("unsupported node evidence provider %q", options.providerID),
 		)
 	}
 }
@@ -313,6 +348,34 @@ func validateFormat(format string) error {
 	default:
 		return cli.WithExitCode(cli.ExitUsage, fmt.Errorf("unsupported format %q", format))
 	}
+}
+
+func parseAgentPCRIndexes(raw string) ([]int, error) {
+	parts := strings.Split(raw, ",")
+	pcrs := make([]int, 0, len(parts))
+	seen := make(map[int]struct{})
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		pcr, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, cli.WithExitCode(cli.ExitUsage, fmt.Errorf("invalid TPM PCR index %q", part))
+		}
+		if pcr < 0 || pcr > 23 {
+			return nil, cli.WithExitCode(cli.ExitUsage, fmt.Errorf("TPM PCR index %d is out of range", pcr))
+		}
+		if _, ok := seen[pcr]; ok {
+			continue
+		}
+		seen[pcr] = struct{}{}
+		pcrs = append(pcrs, pcr)
+	}
+	if len(pcrs) == 0 {
+		return nil, cli.WithExitCode(cli.ExitUsage, errors.New("at least one TPM PCR index is required"))
+	}
+	return pcrs, nil
 }
 
 //nolint:forbidigo // JSON output is a reviewed CLI serialization boundary for typed command DTOs.

@@ -6,12 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
+	"github.com/adfinis/openbao-attested-unseal/internal/nodeevidence"
+	tpmlocal "github.com/adfinis/openbao-attested-unseal/internal/tpm"
 )
 
 const (
@@ -59,18 +62,32 @@ type Config struct {
 
 // KubernetesConfig contains the optional Kubernetes workload verifier configuration.
 type KubernetesConfig struct {
-	Enabled                          bool   `json:"enabled"`
-	APIServer                        string `json:"api_server"`
-	CACertFile                       string `json:"ca_cert_file"`
-	BearerTokenFile                  string `json:"bearer_token_file"`
-	TokenReviewAudience              string `json:"token_review_audience"`
-	Namespace                        string `json:"namespace"`
-	ServiceAccount                   string `json:"service_account"`
-	NodeEvidenceTTLSeconds           int64  `json:"node_evidence_ttl_seconds"`
-	NodeEvidenceRetentionSeconds     int64  `json:"node_evidence_retention_seconds"`
-	APITimeoutSeconds                int64  `json:"api_timeout_seconds"`
-	AllowUnboundServiceAccountTokens bool   `json:"allow_unbound_service_account_tokens"`
-	AllowFakeNodeEvidencePublish     bool   `json:"allow_fake_node_evidence_publish"`
+	Enabled                          bool                             `json:"enabled"`
+	APIServer                        string                           `json:"api_server"`
+	CACertFile                       string                           `json:"ca_cert_file"`
+	BearerTokenFile                  string                           `json:"bearer_token_file"`
+	TokenReviewAudience              string                           `json:"token_review_audience"`
+	Namespace                        string                           `json:"namespace"`
+	ServiceAccount                   string                           `json:"service_account"`
+	NodeEvidenceTTLSeconds           int64                            `json:"node_evidence_ttl_seconds"`
+	NodeEvidenceRetentionSeconds     int64                            `json:"node_evidence_retention_seconds"`
+	APITimeoutSeconds                int64                            `json:"api_timeout_seconds"`
+	AllowUnboundServiceAccountTokens bool                             `json:"allow_unbound_service_account_tokens"`
+	AllowFakeNodeEvidencePublish     bool                             `json:"allow_fake_node_evidence_publish"`
+	NodeEvidencePublishProviders     []string                         `json:"node_evidence_publish_providers"`
+	NodeEvidenceTPMPolicies          map[string]TPMNodeEvidencePolicy `json:"node_evidence_tpm_policies"`
+	NodeEvidencePublishers           map[string]NodeEvidencePublisher `json:"node_evidence_publishers"`
+}
+
+// TPMNodeEvidencePolicy binds one Kubernetes node identity to an enrolled TPM policy.
+type TPMNodeEvidencePolicy struct {
+	NodeUID string          `json:"node_uid"`
+	Policy  tpmlocal.Policy `json:"policy"`
+}
+
+// NodeEvidencePublisher grants one mTLS client certificate permission to publish for named nodes.
+type NodeEvidencePublisher struct {
+	NodeNames []string `json:"node_names"`
 }
 
 // PolicyDocument is the M2 default policy file format.
@@ -243,6 +260,13 @@ func (c Config) validateChallengeTTL() error {
 
 func (c Config) validateKubernetes() error {
 	kubernetes := c.Kubernetes
+	if err := validateKubernetesNodeEvidence(
+		kubernetes,
+		c.RequireClientCert,
+		c.AllowPlaintextForTests,
+	); err != nil {
+		return err
+	}
 	if kubernetes.NodeEvidenceTTLSeconds < 0 {
 		return errors.New("kubernetes.node_evidence_ttl_seconds must not be negative")
 	}
@@ -255,6 +279,152 @@ func (c Config) validateKubernetes() error {
 	if !kubernetes.Enabled {
 		return nil
 	}
+	return validateEnabledKubernetes(kubernetes)
+}
+
+func validateKubernetesNodeEvidence(
+	kubernetes KubernetesConfig,
+	requireClientCert bool,
+	allowPlaintext bool,
+) error {
+	tpmProviderEnabled, err := validateNodeEvidenceProviders(kubernetes.NodeEvidencePublishProviders)
+	if err != nil {
+		return err
+	}
+	if err := validateTPMNodeEvidencePolicies(
+		tpmProviderEnabled,
+		kubernetes.NodeEvidenceTPMPolicies,
+	); err != nil {
+		return err
+	}
+	if err := validateTPMPublisherTransport(
+		tpmProviderEnabled,
+		len(kubernetes.NodeEvidencePublishers) > 0,
+		requireClientCert,
+		allowPlaintext,
+	); err != nil {
+		return err
+	}
+	return validateNodeEvidencePublishers(
+		kubernetes.NodeEvidencePublishers,
+		kubernetes.NodeEvidenceTPMPolicies,
+	)
+}
+
+func validateNodeEvidenceProviders(providers []string) (bool, error) {
+	for _, provider := range providers {
+		provider = strings.TrimSpace(provider)
+		if provider == "" {
+			return false, errors.New("kubernetes.node_evidence_publish_providers must not contain empty values")
+		}
+		if provider != nodeevidence.ProviderTPM2Quote {
+			return false, fmt.Errorf(
+				"unsupported kubernetes node evidence publish provider %q",
+				provider,
+			)
+		}
+	}
+	_, tpmProviderEnabled := slices.BinarySearch(
+		normalizedProviderIDs(providers),
+		nodeevidence.ProviderTPM2Quote,
+	)
+	return tpmProviderEnabled, nil
+}
+
+func validateTPMNodeEvidencePolicies(
+	tpmProviderEnabled bool,
+	policies map[string]TPMNodeEvidencePolicy,
+) error {
+	if tpmProviderEnabled && len(policies) == 0 {
+		return errors.New(
+			"kubernetes.node_evidence_tpm_policies is required when generic-tpm2-quote is enabled",
+		)
+	}
+	if !tpmProviderEnabled && len(policies) > 0 {
+		return errors.New(
+			"generic-tpm2-quote must be enabled when kubernetes.node_evidence_tpm_policies is configured",
+		)
+	}
+	for nodeName, enrolled := range policies {
+		if strings.TrimSpace(nodeName) == "" || strings.TrimSpace(nodeName) != nodeName {
+			return errors.New("kubernetes.node_evidence_tpm_policies contains an invalid node name")
+		}
+		if strings.TrimSpace(enrolled.NodeUID) == "" {
+			return fmt.Errorf("kubernetes TPM policy for node %q requires node_uid", nodeName)
+		}
+		if strings.TrimSpace(enrolled.Policy.EnrolledAKPublicHash) == "" {
+			return fmt.Errorf("kubernetes TPM policy for node %q requires enrolled_ak_public_hash", nodeName)
+		}
+		if err := enrolled.Policy.Validate(); err != nil {
+			return fmt.Errorf("invalid kubernetes TPM policy for node %q: %w", nodeName, err)
+		}
+	}
+	return nil
+}
+
+func validateTPMPublisherTransport(
+	tpmProviderEnabled bool,
+	publishersConfigured bool,
+	requireClientCert bool,
+	allowPlaintext bool,
+) error {
+	if tpmProviderEnabled && allowPlaintext {
+		return errors.New("plaintext transport is not allowed when generic-tpm2-quote is enabled")
+	}
+	if tpmProviderEnabled && !requireClientCert {
+		return errors.New("require_client_cert must be true when generic-tpm2-quote is enabled")
+	}
+	if tpmProviderEnabled && !publishersConfigured {
+		return errors.New(
+			"kubernetes.node_evidence_publishers is required when generic-tpm2-quote is enabled",
+		)
+	}
+	if !tpmProviderEnabled && publishersConfigured {
+		return errors.New(
+			"generic-tpm2-quote must be enabled when kubernetes.node_evidence_publishers is configured",
+		)
+	}
+	return nil
+}
+
+func validateNodeEvidencePublishers(
+	publishers map[string]NodeEvidencePublisher,
+	policies map[string]TPMNodeEvidencePolicy,
+) error {
+	authorizedNodes := make(map[string]struct{})
+	for certificateHash, publisher := range publishers {
+		canonical, err := canonicalSHA256Digest(certificateHash)
+		if err != nil || canonical != certificateHash {
+			return errors.New(
+				"kubernetes.node_evidence_publishers contains a non-canonical certificate SHA-256 hash",
+			)
+		}
+		if len(publisher.NodeNames) == 0 {
+			return fmt.Errorf("kubernetes node evidence publisher %q requires node_names", certificateHash)
+		}
+		for _, nodeName := range publisher.NodeNames {
+			if strings.TrimSpace(nodeName) == "" || strings.TrimSpace(nodeName) != nodeName {
+				return fmt.Errorf("kubernetes node evidence publisher %q contains an invalid node name", certificateHash)
+			}
+			if _, ok := policies[nodeName]; !ok {
+				return fmt.Errorf(
+					"kubernetes node evidence publisher %q references unenrolled node %q",
+					certificateHash,
+					nodeName,
+				)
+			}
+			authorizedNodes[nodeName] = struct{}{}
+		}
+	}
+	for nodeName := range policies {
+		if _, ok := authorizedNodes[nodeName]; !ok {
+			return fmt.Errorf("kubernetes TPM node %q has no authorized evidence publisher", nodeName)
+		}
+	}
+	return nil
+}
+
+func validateEnabledKubernetes(kubernetes KubernetesConfig) error {
 	if strings.TrimSpace(kubernetes.TokenReviewAudience) == "" {
 		return errors.New("kubernetes.token_review_audience is required when kubernetes is enabled")
 	}
@@ -277,6 +447,31 @@ func (c Config) validateKubernetes() error {
 		return errors.New("kubernetes.api_timeout_seconds must be greater than zero")
 	}
 	return nil
+}
+
+func normalizedProviderIDs(providers []string) []string {
+	normalized := make([]string, 0, len(providers))
+	for _, provider := range providers {
+		normalized = append(normalized, strings.TrimSpace(provider))
+	}
+	slices.Sort(normalized)
+	return slices.Compact(normalized)
+}
+
+func cloneTPMNodeEvidencePolicies(
+	policies map[string]TPMNodeEvidencePolicy,
+) map[string]TPMNodeEvidencePolicy {
+	return maps.Clone(policies)
+}
+
+func cloneNodeEvidencePublishers(
+	publishers map[string]NodeEvidencePublisher,
+) map[string]NodeEvidencePublisher {
+	cloned := make(map[string]NodeEvidencePublisher, len(publishers))
+	for certificateHash, publisher := range publishers {
+		cloned[certificateHash] = NodeEvidencePublisher{NodeNames: slices.Clone(publisher.NodeNames)}
+	}
+	return cloned
 }
 
 // ChallengeTTL returns the configured challenge TTL.

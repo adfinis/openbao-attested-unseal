@@ -10,13 +10,6 @@ import (
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 )
 
-const (
-	// SubjectClaimNamespace is the development evidence claim namespace.
-	SubjectClaimNamespace = "dev"
-	// SubjectClaimName is the development evidence claim name.
-	SubjectClaimName = "subject"
-)
-
 // PolicyDecision is a safe policy outcome used by responses, telemetry, and audit.
 type PolicyDecision struct {
 	State     protocolv1.PolicyDecisionState
@@ -222,18 +215,6 @@ func (e *PolicyEngine) challengeDeny(err error) PolicyDecision {
 	default:
 		return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_INTERNAL, "challenge validation failed")
 	}
-}
-
-func subjectFromEvidence(evidence *protocolv1.EvidenceEnvelope) string {
-	if evidence == nil {
-		return ""
-	}
-	for _, claim := range evidence.GetNormalizedClaims() {
-		if claim.GetNamespace() == SubjectClaimNamespace && claim.GetName() == SubjectClaimName {
-			return claim.GetValue()
-		}
-	}
-	return ""
 }
 
 func keyRefFromProto(ref *protocolv1.KeyRef) (keyring.KeyRef, error) {

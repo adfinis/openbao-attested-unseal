@@ -3,21 +3,45 @@ package broker
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	k8sprovider "github.com/adfinis/openbao-attested-unseal/internal/attestation/providers/kubernetes"
+	"github.com/adfinis/openbao-attested-unseal/internal/nodeevidence"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 )
 
 const (
-	adminOperationEvidenceCheck       = "EVIDENCE_CHECK"
-	adminOperationNodeEvidenceList    = "NODE_EVIDENCE_LIST"
-	adminOperationNodeEvidencePublish = "NODE_EVIDENCE_PUBLISH"
+	adminOperationNodeEvidenceChallenge = "NODE_EVIDENCE_CHALLENGE"
+	adminOperationEvidenceCheck         = "EVIDENCE_CHECK"
+	adminOperationNodeEvidenceList      = "NODE_EVIDENCE_LIST"
+	adminOperationNodeEvidencePublish   = "NODE_EVIDENCE_PUBLISH"
 )
 
 type adminAuditStore interface {
 	InsertAuditEvent(ctx context.Context, event AuditEvent) error
+}
+
+type nodeEvidenceChallengeStore interface {
+	CreateChallenge(ctx context.Context, challenge Challenge) error
+	ChallengeNonce(
+		ctx context.Context,
+		challengeID string,
+		clusterID string,
+		subject string,
+		operation protocolv1.Operation,
+		now time.Time,
+	) ([]byte, error)
+	ConsumeChallenge(
+		ctx context.Context,
+		challengeID string,
+		clusterID string,
+		subject string,
+		operation protocolv1.Operation,
+		now time.Time,
+	) error
 }
 
 // AdminService implements broker-local administrative APIs.
@@ -27,10 +51,17 @@ type AdminService struct {
 	auditStore                   adminAuditStore
 	audit                        *FileAuditSink
 	store                        Store
+	challengeStore               nodeEvidenceChallengeStore
 	verifier                     EvidenceVerifier
+	challengeTTL                 time.Duration
+	nodeEvidenceTTL              time.Duration
 	nodeEvidenceRetention        time.Duration
+	clusterID                    string
 	policyID                     string
 	allowFakeNodeEvidencePublish bool
+	nodeEvidencePublishProviders []string
+	nodeEvidenceTPMPolicies      map[string]TPMNodeEvidencePolicy
+	nodeEvidencePublishers       map[string]NodeEvidencePublisher
 	clock                        func() time.Time
 }
 
@@ -39,10 +70,17 @@ type adminServiceConfig struct {
 	auditStore                   adminAuditStore
 	audit                        *FileAuditSink
 	store                        Store
+	challengeStore               nodeEvidenceChallengeStore
 	verifier                     EvidenceVerifier
+	challengeTTL                 time.Duration
+	nodeEvidenceTTL              time.Duration
 	nodeEvidenceRetention        time.Duration
+	clusterID                    string
 	policyID                     string
 	allowFakeNodeEvidencePublish bool
+	nodeEvidencePublishProviders []string
+	nodeEvidenceTPMPolicies      map[string]TPMNodeEvidencePolicy
+	nodeEvidencePublishers       map[string]NodeEvidencePublisher
 }
 
 // NewAdminService creates the broker admin service.
@@ -53,22 +91,36 @@ func NewAdminService(
 ) AdminService {
 	return newAdminService(adminServiceConfig{
 		nodeEvidence:                 nodeEvidence,
+		challengeStore:               NewMemoryChallengeStore(),
 		policyID:                     policyID,
 		allowFakeNodeEvidencePublish: allowFakeNodeEvidencePublish,
+		challengeTTL:                 DefaultChallengeTTL,
+		nodeEvidenceTTL:              DefaultKubernetesNodeEvidenceTTL,
 		nodeEvidenceRetention:        DefaultKubernetesNodeEvidenceRetention,
 	})
 }
 
 func newAdminService(config adminServiceConfig) AdminService {
+	challengeStore := config.challengeStore
+	if challengeStore == nil {
+		challengeStore = NewMemoryChallengeStore()
+	}
 	return AdminService{
 		nodeEvidence:                 config.nodeEvidence,
 		auditStore:                   config.auditStore,
 		audit:                        config.audit,
 		store:                        config.store,
+		challengeStore:               challengeStore,
 		verifier:                     config.verifier,
+		challengeTTL:                 config.challengeTTL,
+		nodeEvidenceTTL:              config.nodeEvidenceTTL,
 		nodeEvidenceRetention:        config.nodeEvidenceRetention,
+		clusterID:                    strings.TrimSpace(config.clusterID),
 		policyID:                     config.policyID,
 		allowFakeNodeEvidencePublish: config.allowFakeNodeEvidencePublish,
+		nodeEvidencePublishProviders: slices.Clone(config.nodeEvidencePublishProviders),
+		nodeEvidenceTPMPolicies:      cloneTPMNodeEvidencePolicies(config.nodeEvidenceTPMPolicies),
+		nodeEvidencePublishers:       cloneNodeEvidencePublishers(config.nodeEvidencePublishers),
 		clock:                        time.Now,
 	}
 }
@@ -87,7 +139,85 @@ func (s AdminService) Status(context.Context, *protocolv1.AdminStatusRequest) (*
 	}, nil
 }
 
-// PublishNodeEvidence stores broker-trusted node evidence.
+// ChallengeNodeEvidence creates a single-use challenge for one node evidence submission.
+func (s AdminService) ChallengeNodeEvidence(
+	ctx context.Context,
+	req *protocolv1.NodeEvidenceChallengeRequest,
+) (*protocolv1.NodeEvidenceChallengeResponse, error) {
+	request, err := nodeEvidenceChallengeRequestFromProto(req)
+	if err != nil {
+		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, err.Error())
+		s.auditNodeEvidence(ctx, adminOperationNodeEvidenceChallenge, request.ClusterID, request.NodeName, "", decision)
+		return &protocolv1.NodeEvidenceChallengeResponse{Decision: decision.Proto()}, nil
+	}
+	if !s.acceptsNodeEvidenceCluster(request.ClusterID) {
+		decision := Deny(
+			s.policyID,
+			protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED,
+			"node evidence cluster is not configured",
+		)
+		s.auditNodeEvidence(ctx, adminOperationNodeEvidenceChallenge, request.ClusterID, request.NodeName, "", decision)
+		return &protocolv1.NodeEvidenceChallengeResponse{Decision: decision.Proto()}, nil
+	}
+	if !s.canPublishNodeEvidenceProvider(request.Provider) {
+		decision := Deny(
+			s.policyID,
+			protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED,
+			fmt.Sprintf("node evidence publish provider %q is not enabled", request.Provider),
+		)
+		s.auditNodeEvidence(ctx, adminOperationNodeEvidenceChallenge, request.ClusterID, request.NodeName, "", decision)
+		return &protocolv1.NodeEvidenceChallengeResponse{Decision: decision.Proto()}, nil
+	}
+	if err := s.validateNodeEvidenceIdentity(request.NodeName, request.NodeUID, request.Provider); err != nil {
+		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED, err.Error())
+		s.auditNodeEvidence(ctx, adminOperationNodeEvidenceChallenge, request.ClusterID, request.NodeName, "", decision)
+		return &protocolv1.NodeEvidenceChallengeResponse{Decision: decision.Proto()}, nil
+	}
+	publisherID, code, err := s.authorizeNodeEvidencePublisher(ctx, request.NodeName, request.Provider)
+	if err != nil {
+		decision := Deny(s.policyID, code, err.Error())
+		s.auditNodeEvidence(ctx, adminOperationNodeEvidenceChallenge, request.ClusterID, request.NodeName, "", decision)
+		return &protocolv1.NodeEvidenceChallengeResponse{Decision: decision.Proto()}, nil
+	}
+	challengeID, err := randomID("node_chal")
+	if err != nil {
+		return nil, err
+	}
+	nonce, err := randomNonce()
+	if err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	ttl := s.challengeTTL
+	if ttl <= 0 {
+		ttl = DefaultChallengeTTL
+	}
+	expiresAt := now.Add(ttl)
+	challenge := Challenge{
+		ID:        challengeID,
+		Nonce:     nonce,
+		ClusterID: request.ClusterID,
+		Subject:   nodeEvidenceChallengeSubject(request, publisherID),
+		Operation: protocolv1.Operation_OPERATION_ENROLL,
+		ExpiresAt: expiresAt,
+		CreatedAt: now,
+	}
+	if err := s.challengeStore.CreateChallenge(ctx, challenge); err != nil {
+		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INTERNAL, "node evidence challenge failed")
+		s.auditNodeEvidence(ctx, adminOperationNodeEvidenceChallenge, request.ClusterID, request.NodeName, "", decision)
+		return &protocolv1.NodeEvidenceChallengeResponse{Decision: decision.Proto()}, nil
+	}
+	decision := Allow(s.policyID)
+	s.auditNodeEvidence(ctx, adminOperationNodeEvidenceChallenge, request.ClusterID, request.NodeName, "", decision)
+	return &protocolv1.NodeEvidenceChallengeResponse{
+		ChallengeId:        challengeID,
+		Nonce:              nonce,
+		ExpiresUnixSeconds: expiresAt.Unix(),
+		Decision:           decision.Proto(),
+	}, nil
+}
+
+// PublishNodeEvidence verifies an untrusted submission and stores its safe projection.
 func (s AdminService) PublishNodeEvidence(
 	ctx context.Context,
 	req *protocolv1.NodeEvidencePublishRequest,
@@ -103,71 +233,139 @@ func (s AdminService) PublishNodeEvidence(
 			Decision: decision.Proto(),
 		}, nil
 	}
-	if req == nil {
-		decision := Deny(
-			s.policyID,
-			protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
-			"node evidence request is required",
-		)
-		s.auditNodeEvidence(ctx, adminOperationNodeEvidencePublish, "", "", "", decision)
-		return &protocolv1.NodeEvidencePublishResponse{
-			Decision: decision.Proto(),
-		}, nil
+	submission, err := nodeEvidenceSubmissionFromProto(req)
+	if err != nil {
+		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, err.Error())
+		s.auditNodeEvidence(ctx, adminOperationNodeEvidencePublish, submission.ClusterID, submission.NodeName, "", decision)
+		return &protocolv1.NodeEvidencePublishResponse{Decision: decision.Proto()}, nil
 	}
-	if !s.allowFakeNodeEvidencePublish {
-		record := req.GetEvidence()
+	payloadHash := nodeEvidencePayloadHash(submission.Payload)
+	if !s.acceptsNodeEvidenceCluster(submission.ClusterID) {
 		decision := Deny(
 			s.policyID,
 			protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED,
-			"fake node evidence publish is disabled",
+			"node evidence cluster is not configured",
 		)
 		s.auditNodeEvidence(
 			ctx,
 			adminOperationNodeEvidencePublish,
-			record.GetClusterId(),
-			record.GetNodeName(),
-			record.GetEvidenceHash(),
+			submission.ClusterID,
+			submission.NodeName,
+			payloadHash,
 			decision,
 		)
-		return &protocolv1.NodeEvidencePublishResponse{
-			Decision: decision.Proto(),
-		}, nil
+		return &protocolv1.NodeEvidencePublishResponse{Decision: decision.Proto()}, nil
 	}
-	if providerID := nodeEvidenceProviderID(req.GetEvidence()); providerID != NodeEvidenceProviderFakeLocal {
-		record := req.GetEvidence()
+	if !s.canPublishNodeEvidenceProvider(submission.Provider) {
 		decision := Deny(
 			s.policyID,
-			protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
-			"only fake-local node evidence can be published through this beta admin API",
+			protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED,
+			fmt.Sprintf("node evidence publish provider %q is not enabled", submission.Provider),
 		)
 		s.auditNodeEvidence(
 			ctx,
 			adminOperationNodeEvidencePublish,
-			record.GetClusterId(),
-			record.GetNodeName(),
-			record.GetEvidenceHash(),
+			submission.ClusterID,
+			submission.NodeName,
+			payloadHash,
 			decision,
 		)
-		return &protocolv1.NodeEvidencePublishResponse{
-			Decision: decision.Proto(),
-		}, nil
+		return &protocolv1.NodeEvidencePublishResponse{Decision: decision.Proto()}, nil
 	}
-	evidence, err := nodeEvidenceFromProto(req.GetEvidence())
+	if err := s.validateNodeEvidenceIdentity(
+		submission.NodeName,
+		submission.NodeUID,
+		submission.Provider,
+	); err != nil {
+		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED, err.Error())
+		s.auditNodeEvidence(
+			ctx,
+			adminOperationNodeEvidencePublish,
+			submission.ClusterID,
+			submission.NodeName,
+			payloadHash,
+			decision,
+		)
+		return &protocolv1.NodeEvidencePublishResponse{Decision: decision.Proto()}, nil
+	}
+	publisherID, code, err := s.authorizeNodeEvidencePublisher(ctx, submission.NodeName, submission.Provider)
 	if err != nil {
-		record := req.GetEvidence()
-		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, err.Error())
+		decision := Deny(s.policyID, code, err.Error())
 		s.auditNodeEvidence(
 			ctx,
 			adminOperationNodeEvidencePublish,
-			record.GetClusterId(),
-			record.GetNodeName(),
-			record.GetEvidenceHash(),
+			submission.ClusterID,
+			submission.NodeName,
+			payloadHash,
 			decision,
 		)
-		return &protocolv1.NodeEvidencePublishResponse{
-			Decision: decision.Proto(),
-		}, nil
+		return &protocolv1.NodeEvidencePublishResponse{Decision: decision.Proto()}, nil
 	}
+	subject := nodeEvidenceChallengeSubject(nodeevidence.ChallengeRequest{
+		ClusterID: submission.ClusterID,
+		NodeName:  submission.NodeName,
+		NodeUID:   submission.NodeUID,
+		Provider:  submission.Provider,
+	}, publisherID)
+	now := s.now().UTC()
+	nonce, err := s.challengeStore.ChallengeNonce(
+		ctx,
+		submission.ChallengeID,
+		submission.ClusterID,
+		subject,
+		protocolv1.Operation_OPERATION_ENROLL,
+		now,
+	)
+	if err != nil {
+		decision := nodeEvidenceChallengeDeny(s.policyID, err)
+		s.auditNodeEvidence(
+			ctx,
+			adminOperationNodeEvidencePublish,
+			submission.ClusterID,
+			submission.NodeName,
+			payloadHash,
+			decision,
+		)
+		return &protocolv1.NodeEvidencePublishResponse{Decision: decision.Proto()}, nil
+	}
+	evidence, err := verifyNodeEvidenceSubmission(submission, nonce, s.nodeEvidenceTPMPolicies)
+	if err != nil {
+		decision := Deny(
+			s.policyID,
+			protocolv1.ErrorCode_ERROR_CODE_ATTESTATION_FAILED,
+			"node evidence verification failed",
+		)
+		s.auditNodeEvidence(
+			ctx,
+			adminOperationNodeEvidencePublish,
+			submission.ClusterID,
+			submission.NodeName,
+			payloadHash,
+			decision,
+		)
+		return &protocolv1.NodeEvidencePublishResponse{Decision: decision.Proto()}, nil
+	}
+	if err := s.challengeStore.ConsumeChallenge(
+		ctx,
+		submission.ChallengeID,
+		submission.ClusterID,
+		subject,
+		protocolv1.Operation_OPERATION_ENROLL,
+		now,
+	); err != nil {
+		decision := nodeEvidenceChallengeDeny(s.policyID, err)
+		s.auditNodeEvidence(
+			ctx,
+			adminOperationNodeEvidencePublish,
+			submission.ClusterID,
+			submission.NodeName,
+			payloadHash,
+			decision,
+		)
+		return &protocolv1.NodeEvidencePublishResponse{Decision: decision.Proto()}, nil
+	}
+	evidence.CollectedAt = now
+	evidence.ExpiresAt = now.Add(s.acceptedNodeEvidenceTTL(submission.RequestedTTL))
 	if err := s.pruneNodeEvidence(ctx, evidence.ClusterID); err != nil {
 		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INTERNAL, "node evidence cleanup failed")
 		s.auditNodeEvidence(
@@ -498,34 +696,103 @@ func workloadIdentityToProto(workload WorkloadIdentity) *protocolv1.WorkloadIden
 	}
 }
 
-func nodeEvidenceFromProto(record *protocolv1.NodeEvidenceRecord) (NodeEvidence, error) {
-	if record == nil {
-		return NodeEvidence{}, errors.New("node evidence record is required")
+func nodeEvidenceChallengeRequestFromProto(
+	req *protocolv1.NodeEvidenceChallengeRequest,
+) (nodeevidence.ChallengeRequest, error) {
+	if req == nil {
+		return nodeevidence.ChallengeRequest{}, errors.New("node evidence challenge request is required")
 	}
-	if record.GetCollectedUnixSeconds() <= 0 || record.GetExpiresUnixSeconds() <= 0 {
-		return NodeEvidence{}, errors.New("collected_unix_seconds and expires_unix_seconds are required")
-	}
-	collectedAt := time.Unix(record.GetCollectedUnixSeconds(), 0).UTC()
-	expiresAt := time.Unix(record.GetExpiresUnixSeconds(), 0).UTC()
-	return NodeEvidence{
-		ClusterID:    record.GetClusterId(),
-		NodeName:     record.GetNodeName(),
-		NodeUID:      record.GetNodeUid(),
-		Provider:     nodeEvidenceProviderID(record),
-		EvidenceHash: record.GetEvidenceHash(),
-		CollectedAt:  collectedAt,
-		ExpiresAt:    expiresAt,
-	}, nil
+	return nodeevidence.NormalizeChallengeRequest(nodeevidence.ChallengeRequest{
+		ClusterID: req.GetClusterId(),
+		NodeName:  req.GetNodeName(),
+		NodeUID:   req.GetNodeUid(),
+		Provider:  req.GetProviderId(),
+	})
 }
 
-func nodeEvidenceProviderID(record *protocolv1.NodeEvidenceRecord) string {
-	if record.GetProviderId() != "" {
-		return record.GetProviderId()
+func nodeEvidenceSubmissionFromProto(
+	req *protocolv1.NodeEvidencePublishRequest,
+) (nodeevidence.Submission, error) {
+	if req == nil || req.GetSubmission() == nil {
+		return nodeevidence.Submission{}, errors.New("node evidence submission is required")
 	}
-	if record.GetProvider() == protocolv1.AttestationProvider_ATTESTATION_PROVIDER_UNSPECIFIED {
-		return ""
+	submission := req.GetSubmission()
+	requestedTTLSeconds := submission.GetRequestedTtlSeconds()
+	if requestedTTLSeconds <= 0 || requestedTTLSeconds > int64((365*24*time.Hour)/time.Second) {
+		return nodeevidence.Submission{}, errors.New("requested_ttl_seconds is invalid")
 	}
-	return record.GetProvider().String()
+	return nodeevidence.NormalizeSubmission(nodeevidence.Submission{
+		ClusterID:    submission.GetClusterId(),
+		NodeName:     submission.GetNodeName(),
+		NodeUID:      submission.GetNodeUid(),
+		Provider:     submission.GetProviderId(),
+		Format:       submission.GetFormat(),
+		Payload:      submission.GetPayload(),
+		ChallengeID:  submission.GetChallengeId(),
+		RequestedTTL: time.Duration(requestedTTLSeconds) * time.Second,
+	})
+}
+
+func nodeEvidenceChallengeSubject(request nodeevidence.ChallengeRequest, publisherID string) string {
+	return "node-evidence:" + nodeEvidencePayloadHash([]byte(strings.Join([]string{
+		request.ClusterID,
+		request.NodeName,
+		request.NodeUID,
+		request.Provider,
+		publisherID,
+	}, "\x00")))
+}
+
+func nodeEvidenceChallengeDeny(policyID string, err error) PolicyDecision {
+	switch {
+	case errors.Is(err, ErrChallengeExpired):
+		return Deny(policyID, protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED, "node evidence challenge expired")
+	case errors.Is(err, ErrChallengeReplayed):
+		return Deny(policyID, protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED, "node evidence challenge was replayed")
+	case errors.Is(err, ErrChallengeNotFound), errors.Is(err, ErrChallengeMismatch):
+		return Deny(policyID, protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED, "node evidence challenge is invalid")
+	default:
+		return Deny(policyID, protocolv1.ErrorCode_ERROR_CODE_INTERNAL, "node evidence challenge validation failed")
+	}
+}
+
+func (s AdminService) validateNodeEvidenceIdentity(nodeName string, nodeUID string, provider string) error {
+	if provider != nodeevidence.ProviderTPM2Quote {
+		return nil
+	}
+	enrolled, ok := s.nodeEvidenceTPMPolicies[nodeName]
+	if !ok || strings.TrimSpace(enrolled.NodeUID) != nodeUID {
+		return errors.New("node TPM identity is not enrolled")
+	}
+	return nil
+}
+
+func (s AdminService) acceptedNodeEvidenceTTL(requested time.Duration) time.Duration {
+	maximum := s.nodeEvidenceTTL
+	if maximum <= 0 {
+		maximum = DefaultKubernetesNodeEvidenceTTL
+	}
+	if requested > maximum {
+		return maximum
+	}
+	return requested
+}
+
+func (s AdminService) acceptsNodeEvidenceCluster(clusterID string) bool {
+	return s.clusterID == "" || s.clusterID == strings.TrimSpace(clusterID)
+}
+
+func (s AdminService) canPublishNodeEvidenceProvider(providerID string) bool {
+	providerID = strings.TrimSpace(providerID)
+	if providerID == "" {
+		return false
+	}
+	if providerID == NodeEvidenceProviderFakeLocal && s.allowFakeNodeEvidencePublish {
+		return true
+	}
+	return slices.ContainsFunc(s.nodeEvidencePublishProviders, func(allowed string) bool {
+		return strings.TrimSpace(allowed) == providerID
+	})
 }
 
 // nodeEvidenceToProto returns the operator-safe diagnostic projection. It must

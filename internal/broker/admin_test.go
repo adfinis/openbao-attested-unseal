@@ -8,6 +8,7 @@ import (
 	"time"
 
 	k8sprovider "github.com/adfinis/openbao-attested-unseal/internal/attestation/providers/kubernetes"
+	"github.com/adfinis/openbao-attested-unseal/internal/nodeevidence"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 )
 
@@ -17,12 +18,7 @@ func TestAdminServicePublishesAndListsNodeEvidence(t *testing.T) {
 	service := NewAdminService(cache, "development", true)
 	service.clock = func() time.Time { return now }
 
-	publish, err := service.PublishNodeEvidence(context.Background(), &protocolv1.NodeEvidencePublishRequest{
-		Evidence: testNodeEvidenceRecord(now, now.Add(time.Minute)),
-	})
-	if err != nil {
-		t.Fatalf("PublishNodeEvidence returned error: %v", err)
-	}
+	publish, _ := publishFakeNodeEvidence(t, &service)
 	if publish.GetDecision().GetState() != protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW {
 		t.Fatalf("publish decision = %s, want allow", publish.GetDecision().GetState())
 	}
@@ -49,20 +45,54 @@ func TestAdminServicePublishesAndListsNodeEvidence(t *testing.T) {
 	}
 }
 
+func TestAdminServiceRejectsNodeEvidenceChallengeForAnotherCluster(t *testing.T) {
+	service := newAdminService(adminServiceConfig{
+		nodeEvidence:                 NewMemoryNodeEvidenceCache(),
+		clusterID:                    "prod-eu1",
+		policyID:                     "development",
+		allowFakeNodeEvidencePublish: true,
+	})
+
+	response, err := service.ChallengeNodeEvidence(
+		context.Background(),
+		&protocolv1.NodeEvidenceChallengeRequest{
+			ClusterId:  "prod-us1",
+			NodeName:   "node-a",
+			ProviderId: nodeevidence.ProviderFakeLocal,
+		},
+	)
+	if err != nil {
+		t.Fatalf("ChallengeNodeEvidence returned error: %v", err)
+	}
+	if response.GetDecision().GetState() != protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_DENY ||
+		response.GetDecision().GetErrors()[0].GetCode() != protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED {
+		t.Fatalf("challenge decision = %#v, want permission denied", response.GetDecision())
+	}
+	if response.GetChallengeId() != "" || len(response.GetNonce()) != 0 {
+		t.Fatalf("denied challenge leaked challenge material: %#v", response)
+	}
+}
+
 func TestAdminServiceReportsStaleNodeEvidence(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	cache := NewMemoryNodeEvidenceCache()
 	service := NewAdminService(cache, "development", true)
 	service.clock = func() time.Time { return now }
 
-	publish, err := service.PublishNodeEvidence(context.Background(), &protocolv1.NodeEvidencePublishRequest{
-		Evidence: testNodeEvidenceRecord(now.Add(-2*time.Minute), now.Add(-time.Minute)),
+	publish, _ := publishFakeNodeEvidence(t, &service)
+	if publish.GetEvidence().GetStatus() != protocolv1.NodeEvidenceStatus_NODE_EVIDENCE_STATUS_FRESH {
+		t.Fatalf("published status = %s, want fresh", publish.GetEvidence().GetStatus())
+	}
+	service.clock = func() time.Time { return now.Add(2 * time.Minute) }
+	list, err := service.ListNodeEvidence(context.Background(), &protocolv1.NodeEvidenceListRequest{
+		ClusterId: "prod-eu1",
+		NodeName:  "node-a",
 	})
 	if err != nil {
-		t.Fatalf("PublishNodeEvidence returned error: %v", err)
+		t.Fatalf("ListNodeEvidence returned error: %v", err)
 	}
-	if publish.GetEvidence().GetStatus() != protocolv1.NodeEvidenceStatus_NODE_EVIDENCE_STATUS_STALE {
-		t.Fatalf("published status = %s, want stale", publish.GetEvidence().GetStatus())
+	if list.GetEvidence()[0].GetStatus() != protocolv1.NodeEvidenceStatus_NODE_EVIDENCE_STATUS_STALE {
+		t.Fatalf("listed status = %s, want stale", list.GetEvidence()[0].GetStatus())
 	}
 }
 
@@ -91,12 +121,7 @@ func TestAdminServiceAuditsNodeEvidencePublishAndList(t *testing.T) {
 		t.Fatalf("missing list decision = %s, want deny", missing.GetDecision().GetState())
 	}
 
-	publish, err := service.PublishNodeEvidence(context.Background(), &protocolv1.NodeEvidencePublishRequest{
-		Evidence: testNodeEvidenceRecord(now, now.Add(time.Minute)),
-	})
-	if err != nil {
-		t.Fatalf("PublishNodeEvidence returned error: %v", err)
-	}
+	publish, evidenceHash := publishFakeNodeEvidence(t, &service)
 	if publish.GetDecision().GetState() != protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW {
 		t.Fatalf("publish decision = %s, want allow", publish.GetDecision().GetState())
 	}
@@ -127,7 +152,7 @@ func TestAdminServiceAuditsNodeEvidencePublishAndList(t *testing.T) {
 		stored,
 		adminOperationNodeEvidencePublish,
 		protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW,
-		"test-node-evidence-hash",
+		evidenceHash,
 	)
 	assertNodeEvidenceAuditEvent(
 		t,
@@ -146,7 +171,7 @@ func TestAdminServiceAuditsNodeEvidencePublishAndList(t *testing.T) {
 		fileEvents,
 		adminOperationNodeEvidencePublish,
 		protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW,
-		"test-node-evidence-hash",
+		evidenceHash,
 	)
 }
 
@@ -163,27 +188,7 @@ func TestAdminServiceRedactsNodeEvidenceDiagnosticPayloads(t *testing.T) {
 		audit:                        NewFileAuditSink(config.AuditFilePath, false),
 	})
 	service.clock = func() time.Time { return now }
-	rawClaimValue := "raw-claim-value-do-not-return"
-	rawErrorMessage := "raw-error-message-do-not-return"
-	rawPolicyID := "raw-policy-id-do-not-return"
-	record := testNodeEvidenceRecord(now, now.Add(time.Minute))
-	record.PolicyId = rawPolicyID
-	record.Claims = []*protocolv1.Claim{{
-		Namespace: "kubernetes",
-		Name:      "raw-claim",
-		Value:     rawClaimValue,
-	}}
-	record.Errors = []*protocolv1.BrokerError{{
-		Code:    protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST,
-		Message: rawErrorMessage,
-	}}
-
-	publish, err := service.PublishNodeEvidence(context.Background(), &protocolv1.NodeEvidencePublishRequest{
-		Evidence: record,
-	})
-	if err != nil {
-		t.Fatalf("PublishNodeEvidence returned error: %v", err)
-	}
+	publish, _ := publishFakeNodeEvidence(t, &service)
 	assertRedactedNodeEvidenceRecord(t, publish.GetEvidence())
 
 	list, err := service.ListNodeEvidence(context.Background(), &protocolv1.NodeEvidenceListRequest{
@@ -199,10 +204,8 @@ func TestAdminServiceRedactsNodeEvidenceDiagnosticPayloads(t *testing.T) {
 	assertRedactedNodeEvidenceRecord(t, list.GetEvidence()[0])
 
 	auditFile := readAuditFile(t, config.AuditFilePath)
-	for _, raw := range []string{rawClaimValue, rawErrorMessage, rawPolicyID} {
-		if strings.Contains(auditFile, raw) {
-			t.Fatalf("audit file contains redacted node evidence payload %q: %s", raw, auditFile)
-		}
+	if strings.Contains(auditFile, nodeevidence.FormatFakeLocal) {
+		t.Fatalf("audit file contains raw node evidence format or payload metadata: %s", auditFile)
 	}
 }
 
@@ -296,15 +299,17 @@ func TestAdminServiceRejectsInvalidNodeEvidence(t *testing.T) {
 	service := NewAdminService(NewMemoryNodeEvidenceCache(), "development", true)
 	tests := map[string]*protocolv1.NodeEvidencePublishRequest{
 		"nil request": nil,
-		"empty record": {
-			Evidence: &protocolv1.NodeEvidenceRecord{ClusterId: "prod-eu1"},
+		"empty submission": {
+			Submission: &protocolv1.NodeEvidenceSubmission{ClusterId: "prod-eu1"},
 		},
-		"missing timestamps": {
-			Evidence: &protocolv1.NodeEvidenceRecord{
-				ClusterId:    "prod-eu1",
-				NodeName:     "node-a",
-				ProviderId:   "fake-local",
-				EvidenceHash: "test-node-evidence-hash",
+		"missing challenge": {
+			Submission: &protocolv1.NodeEvidenceSubmission{
+				ClusterId:           "prod-eu1",
+				NodeName:            "node-a",
+				ProviderId:          "fake-local",
+				Format:              nodeevidence.FormatFakeLocal,
+				Payload:             []byte("payload"),
+				RequestedTtlSeconds: 60,
 			},
 		},
 	}
@@ -322,11 +327,19 @@ func TestAdminServiceRejectsInvalidNodeEvidence(t *testing.T) {
 }
 
 func TestAdminServiceRejectsFakePublishWhenDisabled(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0).UTC()
 	service := NewAdminService(NewMemoryNodeEvidenceCache(), "development", false)
 
 	resp, err := service.PublishNodeEvidence(context.Background(), &protocolv1.NodeEvidencePublishRequest{
-		Evidence: testNodeEvidenceRecord(now, now.Add(time.Minute)),
+		Submission: &protocolv1.NodeEvidenceSubmission{
+			ClusterId:           "prod-eu1",
+			NodeName:            "node-a",
+			NodeUid:             fixtureNodeUID,
+			ProviderId:          nodeevidence.ProviderFakeLocal,
+			Format:              nodeevidence.FormatFakeLocal,
+			Payload:             []byte("payload"),
+			ChallengeId:         "node_chal_disabled",
+			RequestedTtlSeconds: 60,
+		},
 	})
 	if err != nil {
 		t.Fatalf("PublishNodeEvidence returned error: %v", err)
@@ -336,6 +349,43 @@ func TestAdminServiceRejectsFakePublishWhenDisabled(t *testing.T) {
 	}
 	if got := resp.GetDecision().GetErrors()[0].GetCode(); got != protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED {
 		t.Fatalf("publish error code = %s, want permission denied", got)
+	}
+}
+
+func TestAdminServiceRejectsTPMProviderWithoutNodeEnrollment(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0).UTC()
+	cache := NewMemoryNodeEvidenceCache()
+	service := newAdminService(adminServiceConfig{
+		nodeEvidence: cache,
+		policyID:     "development",
+		nodeEvidencePublishProviders: []string{
+			NodeEvidenceProviderTPM2Quote,
+		},
+	})
+	service.clock = func() time.Time { return now }
+	resp, err := service.PublishNodeEvidence(context.Background(), &protocolv1.NodeEvidencePublishRequest{
+		Submission: &protocolv1.NodeEvidenceSubmission{
+			ClusterId:           "prod-eu1",
+			NodeName:            "node-a",
+			NodeUid:             fixtureNodeUID,
+			ProviderId:          NodeEvidenceProviderTPM2Quote,
+			Format:              "tpm-format",
+			Payload:             []byte("payload"),
+			ChallengeId:         "node_chal_unenrolled",
+			RequestedTtlSeconds: 60,
+		},
+	})
+	if err != nil {
+		t.Fatalf("PublishNodeEvidence returned error: %v", err)
+	}
+	if resp.GetDecision().GetState() != protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_DENY {
+		t.Fatalf("publish decision = %s, want deny", resp.GetDecision().GetState())
+	}
+	if _, err := cache.NodeEvidence(context.Background(), "prod-eu1", "node-a"); !errors.Is(
+		err,
+		ErrNodeEvidenceNotFound,
+	) {
+		t.Fatalf("NodeEvidence error = %v, want not found", err)
 	}
 }
 
@@ -437,7 +487,7 @@ func assertRedactedNodeEvidenceRecord(t *testing.T, record *protocolv1.NodeEvide
 		record.GetNodeName() != testNodeName ||
 		record.GetNodeUid() != fixtureNodeUID ||
 		record.GetProviderId() != NodeEvidenceProviderFakeLocal ||
-		record.GetEvidenceHash() != "test-node-evidence-hash" {
+		record.GetEvidenceHash() == "" {
 		t.Fatalf("node evidence metadata = %#v, want diagnostic metadata preserved", record)
 	}
 }
@@ -458,14 +508,50 @@ func assertNodeEvidencePayloadRedacted(t *testing.T, record *protocolv1.NodeEvid
 	}
 }
 
-func testNodeEvidenceRecord(collectedAt time.Time, expiresAt time.Time) *protocolv1.NodeEvidenceRecord {
-	return &protocolv1.NodeEvidenceRecord{
-		ClusterId:            "prod-eu1",
-		NodeName:             "node-a",
-		NodeUid:              fixtureNodeUID,
-		ProviderId:           "fake-local",
-		EvidenceHash:         "test-node-evidence-hash",
-		CollectedUnixSeconds: collectedAt.Unix(),
-		ExpiresUnixSeconds:   expiresAt.Unix(),
+func publishFakeNodeEvidence(
+	t *testing.T,
+	service *AdminService,
+) (*protocolv1.NodeEvidencePublishResponse, string) {
+	t.Helper()
+	ctx := context.Background()
+	challenge, err := service.ChallengeNodeEvidence(ctx, &protocolv1.NodeEvidenceChallengeRequest{
+		ClusterId:  "prod-eu1",
+		NodeName:   testNodeName,
+		NodeUid:    fixtureNodeUID,
+		ProviderId: nodeevidence.ProviderFakeLocal,
+	})
+	if err != nil {
+		t.Fatalf("ChallengeNodeEvidence returned error: %v", err)
 	}
+	if challenge.GetDecision().GetState() != protocolv1.PolicyDecisionState_POLICY_DECISION_STATE_ALLOW {
+		t.Fatalf("challenge decision = %s, want allow", challenge.GetDecision().GetState())
+	}
+	payload, err := nodeevidence.FakeLocalPayload(
+		nodeevidence.ChallengeRequest{
+			ClusterID: "prod-eu1",
+			NodeName:  testNodeName,
+			NodeUID:   fixtureNodeUID,
+			Provider:  nodeevidence.ProviderFakeLocal,
+		},
+		nodeevidence.Challenge{ID: challenge.GetChallengeId(), Nonce: challenge.GetNonce()},
+	)
+	if err != nil {
+		t.Fatalf("FakeLocalPayload returned error: %v", err)
+	}
+	response, err := service.PublishNodeEvidence(ctx, &protocolv1.NodeEvidencePublishRequest{
+		Submission: &protocolv1.NodeEvidenceSubmission{
+			ClusterId:           "prod-eu1",
+			NodeName:            testNodeName,
+			NodeUid:             fixtureNodeUID,
+			ProviderId:          nodeevidence.ProviderFakeLocal,
+			Format:              nodeevidence.FormatFakeLocal,
+			Payload:             payload,
+			ChallengeId:         challenge.GetChallengeId(),
+			RequestedTtlSeconds: int64(time.Minute / time.Second),
+		},
+	})
+	if err != nil {
+		t.Fatalf("PublishNodeEvidence returned error: %v", err)
+	}
+	return response, nodeEvidencePayloadHash(payload)
 }

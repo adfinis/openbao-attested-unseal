@@ -932,10 +932,8 @@ func testEvidence(challengeID string, subject string) *protocolv1.EvidenceEnvelo
 	return &protocolv1.EvidenceEnvelope{
 		Provider:    protocolv1.AttestationProvider_ATTESTATION_PROVIDER_UNSPECIFIED,
 		Format:      "development-subject",
+		Payload:     []byte(subject),
 		ChallengeId: challengeID,
-		NormalizedClaims: []*protocolv1.Claim{
-			{Namespace: SubjectClaimNamespace, Name: SubjectClaimName, Value: subject},
-		},
 	}
 }
 

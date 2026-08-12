@@ -21,6 +21,7 @@ service RecoveryService {
 
 service AdminService {
   rpc Status(AdminStatusRequest) returns (AdminStatusResponse);
+  rpc ChallengeNodeEvidence(NodeEvidenceChallengeRequest) returns (NodeEvidenceChallengeResponse);
   rpc PublishNodeEvidence(NodeEvidencePublishRequest) returns (NodeEvidencePublishResponse);
   rpc ListNodeEvidence(NodeEvidenceListRequest) returns (NodeEvidenceListResponse);
   rpc CheckEvidence(EvidenceCheckRequest) returns (EvidenceCheckResponse);
@@ -155,9 +156,36 @@ message NodeEvidenceListResponse {
   PolicyDecision decision = 2;
 }
 
+message NodeEvidenceChallengeRequest {
+  string cluster_id = 1;
+  string node_name = 2;
+  string node_uid = 3;
+  string provider_id = 4;
+  AuditContext audit = 5;
+}
+
+message NodeEvidenceChallengeResponse {
+  string challenge_id = 1;
+  bytes nonce = 2;
+  int64 expires_unix_seconds = 3;
+  PolicyDecision decision = 4;
+}
+
+message NodeEvidenceSubmission {
+  string cluster_id = 1;
+  string node_name = 2;
+  string node_uid = 3;
+  string provider_id = 4;
+  string format = 5;
+  bytes payload = 6;
+  string challenge_id = 7;
+  int64 requested_ttl_seconds = 8;
+}
+
 message NodeEvidencePublishRequest {
-  NodeEvidenceRecord evidence = 1;
+  reserved 1;
   AuditContext audit = 2;
+  NodeEvidenceSubmission submission = 3;
 }
 
 message NodeEvidencePublishResponse {

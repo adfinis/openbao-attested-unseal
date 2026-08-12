@@ -19,11 +19,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-const (
-	developmentSubjectClaimNamespace = "dev"
-	developmentSubjectClaimName      = "subject"
-)
-
 type brokerBackend struct {
 	config Config
 	conn   *grpc.ClientConn
@@ -166,14 +161,8 @@ func (b *brokerBackend) evidence(challengeID string) (*protocolv1.EvidenceEnvelo
 		return &protocolv1.EvidenceEnvelope{
 			Provider:    protocolv1.AttestationProvider_ATTESTATION_PROVIDER_UNSPECIFIED,
 			Format:      "development-subject",
+			Payload:     []byte(b.config.NodeID),
 			ChallengeId: challengeID,
-			NormalizedClaims: []*protocolv1.Claim{
-				{
-					Namespace: developmentSubjectClaimNamespace,
-					Name:      developmentSubjectClaimName,
-					Value:     b.config.NodeID,
-				},
-			},
 		}, nil
 	case EvidenceModeKubernetesWorkload:
 		token, err := readKubernetesWorkloadToken(b.config.KubernetesTokenFile)

@@ -3,14 +3,13 @@ package nodeagent
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
-	"github.com/adfinis/openbao-attested-unseal/internal/broker"
+	"github.com/adfinis/openbao-attested-unseal/internal/nodeevidence"
 )
 
 var (
@@ -28,61 +27,80 @@ type PublishRequest struct {
 	TTL       time.Duration
 }
 
-// ProviderEvidence is the provider-specific metadata that can be stored safely
-// in the broker node evidence record.
+// ProviderEvidence is untrusted raw provider evidence sent to the broker.
 type ProviderEvidence struct {
-	ProviderID   string
-	EvidenceHash string
+	Format  string
+	Payload []byte
 }
 
-// Provider collects or derives node evidence metadata for one node.
+// Provider collects raw node evidence for a broker-issued challenge.
 type Provider interface {
-	CollectNodeEvidence(context.Context, PublishRequest) (ProviderEvidence, error)
+	ProviderID() string
+	CollectNodeEvidence(context.Context, PublishRequest, nodeevidence.Challenge) (ProviderEvidence, error)
 }
 
-// Publisher writes fresh node evidence into the broker evidence store.
+// Publisher requests a challenge, collects raw evidence, and submits it for broker verification.
 type Publisher struct {
-	Writer   broker.NodeEvidenceWriter
+	Client   nodeevidence.PublisherClient
 	Provider Provider
 	Clock    func() time.Time
 }
 
-// Publish collects provider metadata and writes one fresh broker node evidence
-// record. The returned record is the same sanitized metadata stored in the broker.
-func (p Publisher) Publish(ctx context.Context, request PublishRequest) (broker.NodeEvidence, error) {
+// Publish returns the sanitized record produced after broker-side verification.
+func (p Publisher) Publish(ctx context.Context, request PublishRequest) (nodeevidence.Evidence, error) {
 	request, err := normalizePublishRequest(request)
 	if err != nil {
-		return broker.NodeEvidence{}, err
+		return nodeevidence.Evidence{}, err
 	}
-	if p.Writer == nil {
-		return broker.NodeEvidence{}, fmt.Errorf("%w: writer is required", ErrInvalidPublishRequest)
+	if p.Client == nil {
+		return nodeevidence.Evidence{}, fmt.Errorf("%w: client is required", ErrInvalidPublishRequest)
 	}
 	if p.Provider == nil {
-		return broker.NodeEvidence{}, fmt.Errorf("%w: provider is required", ErrInvalidPublishRequest)
+		return nodeevidence.Evidence{}, fmt.Errorf("%w: provider is required", ErrInvalidPublishRequest)
 	}
-	now := p.now()
-	providerEvidence, err := p.Provider.CollectNodeEvidence(ctx, request)
+	providerID := strings.TrimSpace(p.Provider.ProviderID())
+	if providerID == "" {
+		return nodeevidence.Evidence{}, fmt.Errorf("%w: provider_id is required", ErrInvalidProviderEvidence)
+	}
+	challenge, err := p.Client.RequestNodeEvidenceChallenge(ctx, nodeevidence.ChallengeRequest{
+		ClusterID: request.ClusterID,
+		NodeName:  request.NodeName,
+		NodeUID:   request.NodeUID,
+		Provider:  providerID,
+	})
 	if err != nil {
-		return broker.NodeEvidence{}, fmt.Errorf("collect node evidence: %w", err)
+		return nodeevidence.Evidence{}, fmt.Errorf("request node evidence challenge: %w", err)
+	}
+	challenge, err = nodeevidence.NormalizeChallenge(challenge)
+	if err != nil {
+		return nodeevidence.Evidence{}, fmt.Errorf("%w: %v", ErrInvalidProviderEvidence, err)
+	}
+	if !challenge.ExpiresAt.After(p.now()) {
+		return nodeevidence.Evidence{}, fmt.Errorf("%w: broker challenge is expired", ErrInvalidProviderEvidence)
+	}
+	providerEvidence, err := p.Provider.CollectNodeEvidence(ctx, request, challenge)
+	if err != nil {
+		return nodeevidence.Evidence{}, fmt.Errorf("collect node evidence: %w", err)
 	}
 	providerEvidence = normalizeProviderEvidence(providerEvidence)
-	if providerEvidence.ProviderID == "" || providerEvidence.EvidenceHash == "" {
-		return broker.NodeEvidence{}, fmt.Errorf(
-			"%w: provider_id and evidence_hash are required",
+	if providerEvidence.Format == "" || len(providerEvidence.Payload) == 0 {
+		return nodeevidence.Evidence{}, fmt.Errorf(
+			"%w: format and payload are required",
 			ErrInvalidProviderEvidence,
 		)
 	}
-	evidence := broker.NodeEvidence{
+	evidence, err := p.Client.SubmitNodeEvidence(ctx, nodeevidence.Submission{
 		ClusterID:    request.ClusterID,
 		NodeName:     request.NodeName,
 		NodeUID:      request.NodeUID,
-		Provider:     providerEvidence.ProviderID,
-		EvidenceHash: providerEvidence.EvidenceHash,
-		CollectedAt:  now,
-		ExpiresAt:    now.Add(request.TTL),
-	}
-	if err := p.Writer.PutNodeEvidence(ctx, evidence); err != nil {
-		return broker.NodeEvidence{}, fmt.Errorf("publish node evidence: %w", err)
+		Provider:     providerID,
+		Format:       providerEvidence.Format,
+		Payload:      providerEvidence.Payload,
+		ChallengeID:  challenge.ID,
+		RequestedTTL: request.TTL,
+	})
+	if err != nil {
+		return nodeevidence.Evidence{}, fmt.Errorf("publish node evidence: %w", err)
 	}
 	return evidence, nil
 }
@@ -109,8 +127,8 @@ func normalizePublishRequest(request PublishRequest) (PublishRequest, error) {
 
 func normalizeProviderEvidence(evidence ProviderEvidence) ProviderEvidence {
 	return ProviderEvidence{
-		ProviderID:   strings.TrimSpace(evidence.ProviderID),
-		EvidenceHash: strings.TrimSpace(evidence.EvidenceHash),
+		Format:  strings.TrimSpace(evidence.Format),
+		Payload: slices.Clone(evidence.Payload),
 	}
 }
 
@@ -118,20 +136,32 @@ func normalizeProviderEvidence(evidence ProviderEvidence) ProviderEvidence {
 // and local labs. It is not a production security boundary.
 type FakeLocalProvider struct{}
 
-// CollectNodeEvidence returns deterministic fake-local evidence metadata.
-func (FakeLocalProvider) CollectNodeEvidence(_ context.Context, request PublishRequest) (ProviderEvidence, error) {
+// ProviderID returns the explicit development-only provider identifier.
+func (FakeLocalProvider) ProviderID() string {
+	return nodeevidence.ProviderFakeLocal
+}
+
+// CollectNodeEvidence returns deterministic challenge-bound fake-local evidence.
+func (FakeLocalProvider) CollectNodeEvidence(
+	_ context.Context,
+	request PublishRequest,
+	challenge nodeevidence.Challenge,
+) (ProviderEvidence, error) {
 	request, err := normalizePublishRequest(request)
 	if err != nil {
 		return ProviderEvidence{}, err
 	}
-	sum := sha256.Sum256([]byte(strings.Join([]string{
-		request.ClusterID,
-		request.NodeName,
-		request.NodeUID,
-		broker.NodeEvidenceProviderFakeLocal,
-	}, "\x00")))
+	payload, err := nodeevidence.FakeLocalPayload(nodeevidence.ChallengeRequest{
+		ClusterID: request.ClusterID,
+		NodeName:  request.NodeName,
+		NodeUID:   request.NodeUID,
+		Provider:  nodeevidence.ProviderFakeLocal,
+	}, challenge)
+	if err != nil {
+		return ProviderEvidence{}, err
+	}
 	return ProviderEvidence{
-		ProviderID:   broker.NodeEvidenceProviderFakeLocal,
-		EvidenceHash: hex.EncodeToString(sum[:]),
+		Format:  nodeevidence.FormatFakeLocal,
+		Payload: payload,
 	}, nil
 }

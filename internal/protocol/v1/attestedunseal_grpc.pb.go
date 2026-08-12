@@ -439,10 +439,11 @@ var RecoveryService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	AdminService_Status_FullMethodName              = "/openbao.attestedunseal.v1.AdminService/Status"
-	AdminService_PublishNodeEvidence_FullMethodName = "/openbao.attestedunseal.v1.AdminService/PublishNodeEvidence"
-	AdminService_ListNodeEvidence_FullMethodName    = "/openbao.attestedunseal.v1.AdminService/ListNodeEvidence"
-	AdminService_CheckEvidence_FullMethodName       = "/openbao.attestedunseal.v1.AdminService/CheckEvidence"
+	AdminService_Status_FullMethodName                = "/openbao.attestedunseal.v1.AdminService/Status"
+	AdminService_ChallengeNodeEvidence_FullMethodName = "/openbao.attestedunseal.v1.AdminService/ChallengeNodeEvidence"
+	AdminService_PublishNodeEvidence_FullMethodName   = "/openbao.attestedunseal.v1.AdminService/PublishNodeEvidence"
+	AdminService_ListNodeEvidence_FullMethodName      = "/openbao.attestedunseal.v1.AdminService/ListNodeEvidence"
+	AdminService_CheckEvidence_FullMethodName         = "/openbao.attestedunseal.v1.AdminService/CheckEvidence"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -450,6 +451,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type AdminServiceClient interface {
 	Status(ctx context.Context, in *AdminStatusRequest, opts ...grpc.CallOption) (*AdminStatusResponse, error)
+	ChallengeNodeEvidence(ctx context.Context, in *NodeEvidenceChallengeRequest, opts ...grpc.CallOption) (*NodeEvidenceChallengeResponse, error)
 	PublishNodeEvidence(ctx context.Context, in *NodeEvidencePublishRequest, opts ...grpc.CallOption) (*NodeEvidencePublishResponse, error)
 	ListNodeEvidence(ctx context.Context, in *NodeEvidenceListRequest, opts ...grpc.CallOption) (*NodeEvidenceListResponse, error)
 	CheckEvidence(ctx context.Context, in *EvidenceCheckRequest, opts ...grpc.CallOption) (*EvidenceCheckResponse, error)
@@ -467,6 +469,16 @@ func (c *adminServiceClient) Status(ctx context.Context, in *AdminStatusRequest,
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AdminStatusResponse)
 	err := c.cc.Invoke(ctx, AdminService_Status_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *adminServiceClient) ChallengeNodeEvidence(ctx context.Context, in *NodeEvidenceChallengeRequest, opts ...grpc.CallOption) (*NodeEvidenceChallengeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NodeEvidenceChallengeResponse)
+	err := c.cc.Invoke(ctx, AdminService_ChallengeNodeEvidence_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -508,6 +520,7 @@ func (c *adminServiceClient) CheckEvidence(ctx context.Context, in *EvidenceChec
 // for forward compatibility.
 type AdminServiceServer interface {
 	Status(context.Context, *AdminStatusRequest) (*AdminStatusResponse, error)
+	ChallengeNodeEvidence(context.Context, *NodeEvidenceChallengeRequest) (*NodeEvidenceChallengeResponse, error)
 	PublishNodeEvidence(context.Context, *NodeEvidencePublishRequest) (*NodeEvidencePublishResponse, error)
 	ListNodeEvidence(context.Context, *NodeEvidenceListRequest) (*NodeEvidenceListResponse, error)
 	CheckEvidence(context.Context, *EvidenceCheckRequest) (*EvidenceCheckResponse, error)
@@ -523,6 +536,9 @@ type UnimplementedAdminServiceServer struct{}
 
 func (UnimplementedAdminServiceServer) Status(context.Context, *AdminStatusRequest) (*AdminStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Status not implemented")
+}
+func (UnimplementedAdminServiceServer) ChallengeNodeEvidence(context.Context, *NodeEvidenceChallengeRequest) (*NodeEvidenceChallengeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ChallengeNodeEvidence not implemented")
 }
 func (UnimplementedAdminServiceServer) PublishNodeEvidence(context.Context, *NodeEvidencePublishRequest) (*NodeEvidencePublishResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PublishNodeEvidence not implemented")
@@ -568,6 +584,24 @@ func _AdminService_Status_Handler(srv interface{}, ctx context.Context, dec func
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AdminServiceServer).Status(ctx, req.(*AdminStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AdminService_ChallengeNodeEvidence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NodeEvidenceChallengeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).ChallengeNodeEvidence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_ChallengeNodeEvidence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).ChallengeNodeEvidence(ctx, req.(*NodeEvidenceChallengeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -636,6 +670,10 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Status",
 			Handler:    _AdminService_Status_Handler,
+		},
+		{
+			MethodName: "ChallengeNodeEvidence",
+			Handler:    _AdminService_ChallengeNodeEvidence_Handler,
 		},
 		{
 			MethodName: "PublishNodeEvidence",

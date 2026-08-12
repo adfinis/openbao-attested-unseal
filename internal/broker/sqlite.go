@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -912,6 +913,50 @@ func (s *SQLiteStore) CreateChallenge(ctx context.Context, challenge Challenge) 
 		return fmt.Errorf("insert challenge: %w", err)
 	}
 	return nil
+}
+
+// ChallengeNonce returns the nonce after validating challenge scope, freshness, and replay state.
+func (s *SQLiteStore) ChallengeNonce(
+	ctx context.Context,
+	challengeID string,
+	clusterID string,
+	subject string,
+	operation protocolv1.Operation,
+	now time.Time,
+) ([]byte, error) {
+	var nonce []byte
+	var storedCluster string
+	var storedSubject string
+	var storedOperation string
+	var expiresRaw string
+	var consumed sql.NullString
+	err := s.db.QueryRowContext(
+		ctx,
+		`SELECT nonce, cluster_id, subject_id, operation, expires_at, consumed_at
+		 FROM challenges
+		 WHERE challenge_id = ?`,
+		challengeID,
+	).Scan(&nonce, &storedCluster, &storedSubject, &storedOperation, &expiresRaw, &consumed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrChallengeNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query challenge nonce: %w", err)
+	}
+	if storedCluster != clusterID || storedSubject != subject || storedOperation != operation.String() {
+		return nil, ErrChallengeMismatch
+	}
+	if consumed.Valid {
+		return nil, ErrChallengeReplayed
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, expiresRaw)
+	if err != nil {
+		return nil, fmt.Errorf("parse challenge expiry: %w", err)
+	}
+	if !now.Before(expiresAt) {
+		return nil, ErrChallengeExpired
+	}
+	return slices.Clone(nonce), nil
 }
 
 // ConsumeChallenge validates scope and consumes one challenge exactly once.

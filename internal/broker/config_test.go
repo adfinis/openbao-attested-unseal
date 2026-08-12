@@ -3,6 +3,9 @@ package broker
 import (
 	"strings"
 	"testing"
+
+	"github.com/adfinis/openbao-attested-unseal/internal/nodeevidence"
+	tpmlocal "github.com/adfinis/openbao-attested-unseal/internal/tpm"
 )
 
 func TestConfigValidateAcceptsDefaultDisabledKubernetes(t *testing.T) {
@@ -108,6 +111,132 @@ func TestConfigValidateRejectsInvalidKubernetesAPITimeout(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "api_timeout_seconds") {
 		t.Fatalf("Validate error = %v, want api_timeout_seconds error", err)
 	}
+}
+
+func TestConfigValidateRejectsEmptyNodeEvidenceProvider(t *testing.T) {
+	config := validBrokerConfig()
+	config.Kubernetes = KubernetesConfig{
+		Enabled:                      true,
+		TokenReviewAudience:          "bao-unseald",
+		Namespace:                    "openbao",
+		ServiceAccount:               "openbao",
+		NodeEvidencePublishProviders: []string{"generic-tpm2-quote", " "},
+	}
+
+	err := config.Validate()
+	if err == nil || !strings.Contains(err.Error(), "node_evidence_publish_providers") {
+		t.Fatalf("Validate error = %v, want node_evidence_publish_providers error", err)
+	}
+}
+
+func TestConfigValidateRejectsUnknownNodeEvidenceProvider(t *testing.T) {
+	config := validBrokerConfig()
+	config.Kubernetes.NodeEvidencePublishProviders = []string{"publisher-asserted-hash"}
+
+	err := config.Validate()
+	if err == nil || !strings.Contains(err.Error(), "unsupported kubernetes node evidence publish provider") {
+		t.Fatalf("Validate error = %v, want unsupported provider error", err)
+	}
+}
+
+func TestConfigValidateAcceptsEnrolledTPMNodePolicy(t *testing.T) {
+	config := validBrokerConfig()
+	configureMutualTLS(&config)
+	config.Kubernetes.NodeEvidencePublishProviders = []string{nodeevidence.ProviderTPM2Quote}
+	config.Kubernetes.NodeEvidenceTPMPolicies = map[string]TPMNodeEvidencePolicy{
+		"node-a": {
+			NodeUID: "node-uid-a",
+			Policy: tpmlocal.Policy{
+				Mode:                 tpmlocal.PolicyModeTPMOnly,
+				EnrolledAKPublicHash: "sha256:" + strings.Repeat("ab", 32),
+			},
+		},
+	}
+	config.Kubernetes.NodeEvidencePublishers = map[string]NodeEvidencePublisher{
+		"sha256:" + strings.Repeat("cd", 32): {NodeNames: []string{"node-a"}},
+	}
+
+	if err := config.Validate(); err != nil {
+		t.Fatalf("Validate returned error: %v", err)
+	}
+}
+
+func TestConfigValidateRejectsTPMProviderWithoutPolicies(t *testing.T) {
+	config := validBrokerConfig()
+	config.Kubernetes.NodeEvidencePublishProviders = []string{nodeevidence.ProviderTPM2Quote}
+
+	err := config.Validate()
+	if err == nil || !strings.Contains(err.Error(), "node_evidence_tpm_policies") {
+		t.Fatalf("Validate error = %v, want node_evidence_tpm_policies error", err)
+	}
+}
+
+func TestConfigValidateRejectsUnboundTPMNodePolicy(t *testing.T) {
+	config := validBrokerConfig()
+	config.Kubernetes.NodeEvidencePublishProviders = []string{nodeevidence.ProviderTPM2Quote}
+	config.Kubernetes.NodeEvidenceTPMPolicies = map[string]TPMNodeEvidencePolicy{
+		"node-a": {
+			Policy: tpmlocal.Policy{Mode: tpmlocal.PolicyModeTPMOnly},
+		},
+	}
+
+	err := config.Validate()
+	if err == nil || !strings.Contains(err.Error(), "node_uid") {
+		t.Fatalf("Validate error = %v, want node_uid error", err)
+	}
+}
+
+func TestConfigValidateRejectsTPMPublisherWithoutMutualTLS(t *testing.T) {
+	config := validBrokerConfig()
+	config.Kubernetes.NodeEvidencePublishProviders = []string{nodeevidence.ProviderTPM2Quote}
+	config.Kubernetes.NodeEvidenceTPMPolicies = map[string]TPMNodeEvidencePolicy{
+		"node-a": {
+			NodeUID: "node-uid-a",
+			Policy: tpmlocal.Policy{
+				Mode:                 tpmlocal.PolicyModeTPMOnly,
+				EnrolledAKPublicHash: "sha256:" + strings.Repeat("ab", 32),
+			},
+		},
+	}
+	config.Kubernetes.NodeEvidencePublishers = map[string]NodeEvidencePublisher{
+		"sha256:" + strings.Repeat("cd", 32): {NodeNames: []string{"node-a"}},
+	}
+
+	err := config.Validate()
+	if err == nil || !strings.Contains(err.Error(), "plaintext transport") {
+		t.Fatalf("Validate error = %v, want plaintext transport error", err)
+	}
+}
+
+func TestConfigValidateRejectsUnscopedTPMPublisher(t *testing.T) {
+	config := validBrokerConfig()
+	configureMutualTLS(&config)
+	config.Kubernetes.NodeEvidencePublishProviders = []string{nodeevidence.ProviderTPM2Quote}
+	config.Kubernetes.NodeEvidenceTPMPolicies = map[string]TPMNodeEvidencePolicy{
+		"node-a": {
+			NodeUID: "node-uid-a",
+			Policy: tpmlocal.Policy{
+				Mode:                 tpmlocal.PolicyModeTPMOnly,
+				EnrolledAKPublicHash: "sha256:" + strings.Repeat("ab", 32),
+			},
+		},
+	}
+	config.Kubernetes.NodeEvidencePublishers = map[string]NodeEvidencePublisher{
+		"sha256:" + strings.Repeat("cd", 32): {NodeNames: []string{"node-b"}},
+	}
+
+	err := config.Validate()
+	if err == nil || !strings.Contains(err.Error(), "unenrolled node") {
+		t.Fatalf("Validate error = %v, want unenrolled node error", err)
+	}
+}
+
+func configureMutualTLS(config *Config) {
+	config.AllowPlaintextForTests = false
+	config.TLSCertFile = "server.crt"
+	config.TLSKeyFile = "server.key"
+	config.RequireClientCert = true
+	config.ClientCAFile = "client-ca.crt"
 }
 
 func validBrokerConfig() Config {

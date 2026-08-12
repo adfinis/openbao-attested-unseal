@@ -2,8 +2,6 @@ package baounsealctl
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/adfinis/openbao-attested-unseal/internal/broker"
 	"github.com/adfinis/openbao-attested-unseal/internal/brokeradmin"
 	"github.com/adfinis/openbao-attested-unseal/internal/cli"
 	"github.com/adfinis/openbao-attested-unseal/internal/nodeagent"
@@ -30,7 +27,6 @@ type k8sPublishNodeOptions struct {
 	nodeName       string
 	nodeUID        string
 	providerID     string
-	evidenceHash   string
 	ttl            time.Duration
 	timeout        time.Duration
 	format         string
@@ -79,9 +75,8 @@ func parseK8sPublishNodeOptions(args []string, stderr io.Writer) (k8sPublishNode
 	nodeName := flags.String("node-name", "", "Kubernetes node name.")
 	nodeUID := flags.String("node-uid", "", "Optional Kubernetes node UID.")
 	providerID := flags.String("provider-id", kubernetesProviderFakeLocal, "Node evidence provider identifier.")
-	evidenceHash := flags.String("evidence-hash", "", "Optional synthetic evidence hash.")
-	ttl := flags.Duration("ttl", broker.DefaultKubernetesNodeEvidenceTTL, "Node evidence TTL.")
-	timeout := flags.Duration("timeout", broker.DefaultKubernetesAPITimeout, "Broker request timeout.")
+	ttl := flags.Duration("ttl", brokeradmin.DefaultNodeEvidenceTTL, "Node evidence TTL.")
+	timeout := flags.Duration("timeout", brokeradmin.DefaultRequestTimeout, "Broker request timeout.")
 	format := flags.String("format", formatText, "Output format: text or json.")
 	if err := flags.Parse(args); err != nil {
 		return k8sPublishNodeOptions{}, cli.WithExitCode(cli.ExitUsage, err)
@@ -99,6 +94,12 @@ func parseK8sPublishNodeOptions(args []string, stderr io.Writer) (k8sPublishNode
 	}
 	if strings.TrimSpace(*providerID) == "" {
 		return k8sPublishNodeOptions{}, cli.WithExitCode(cli.ExitUsage, errors.New("-provider-id is required"))
+	}
+	if strings.TrimSpace(*providerID) != kubernetesProviderFakeLocal {
+		return k8sPublishNodeOptions{}, cli.WithExitCode(
+			cli.ExitUsage,
+			errors.New("k8s publish-node supports only the fake-local lab provider"),
+		)
 	}
 	if *ttl <= 0 {
 		return k8sPublishNodeOptions{}, cli.WithExitCode(cli.ExitUsage, errors.New("-ttl must be greater than zero"))
@@ -123,7 +124,6 @@ func parseK8sPublishNodeOptions(args []string, stderr io.Writer) (k8sPublishNode
 		nodeName:       strings.TrimSpace(*nodeName),
 		nodeUID:        strings.TrimSpace(*nodeUID),
 		providerID:     strings.TrimSpace(*providerID),
-		evidenceHash:   strings.TrimSpace(*evidenceHash),
 		ttl:            *ttl,
 		timeout:        *timeout,
 		format:         *format,
@@ -144,10 +144,10 @@ func publishK8sNodeEvidence(options k8sPublishNodeOptions) (k8sPublishNodeOutput
 	ctx, cancel := context.WithTimeout(cli.ProcessContext(), options.timeout)
 	defer cancel()
 	client := protocolv1.NewAdminServiceClient(conn)
-	writer := &brokeradmin.NodeEvidenceWriter{Client: client}
+	writer := &brokeradmin.NodeEvidenceClient{Client: client}
 	publisher := nodeagent.Publisher{
-		Writer:   writer,
-		Provider: k8sPublishNodeProvider(options),
+		Client:   writer,
+		Provider: nodeagent.FakeLocalProvider{},
 	}
 	_, err = publisher.Publish(ctx, nodeagent.PublishRequest{
 		ClusterID: options.clusterID,
@@ -172,33 +172,6 @@ func k8sPublishNodeExitError(err error) error {
 	return err
 }
 
-func k8sPublishNodeProvider(options k8sPublishNodeOptions) nodeagent.Provider {
-	if options.providerID == broker.NodeEvidenceProviderFakeLocal && options.evidenceHash == "" {
-		return nodeagent.FakeLocalProvider{}
-	}
-	evidenceHash := options.evidenceHash
-	if evidenceHash == "" {
-		evidenceHash = defaultK8sEvidenceHash(options)
-	}
-	return staticNodeEvidenceProvider{
-		evidence: nodeagent.ProviderEvidence{
-			ProviderID:   options.providerID,
-			EvidenceHash: evidenceHash,
-		},
-	}
-}
-
-type staticNodeEvidenceProvider struct {
-	evidence nodeagent.ProviderEvidence
-}
-
-func (p staticNodeEvidenceProvider) CollectNodeEvidence(
-	context.Context,
-	nodeagent.PublishRequest,
-) (nodeagent.ProviderEvidence, error) {
-	return p.evidence, nil
-}
-
 func k8sPublishAdminClientOptions(options k8sPublishNodeOptions) k8sAdminClientOptions {
 	return k8sAdminClientOptions{
 		address:        options.address,
@@ -210,16 +183,6 @@ func k8sPublishAdminClientOptions(options k8sPublishNodeOptions) k8sAdminClientO
 		timeout:        options.timeout,
 		format:         options.format,
 	}
-}
-
-func defaultK8sEvidenceHash(options k8sPublishNodeOptions) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{
-		options.clusterID,
-		options.nodeName,
-		options.nodeUID,
-		options.providerID,
-	}, "\x00")))
-	return hex.EncodeToString(sum[:])
 }
 
 func k8sPublishNodeOutputFromProto(
