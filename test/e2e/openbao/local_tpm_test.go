@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	defaultOpenBaoImage = "openbao/openbao:2.6.0-beta20260622"
+	defaultOpenBaoImage = "openbao/openbao:2.6.1"
 	defaultAlpineImage  = "alpine:3.20"
 	baoAddr             = "http://127.0.0.1:8200"
 )
@@ -58,7 +58,7 @@ type ctlVerificationOutput struct {
 	Verified bool   `json:"verified"`
 }
 
-func TestLocalTPMAutoUnsealWithOpenBaoBeta(t *testing.T) {
+func TestLocalTPMAutoUnsealWithOpenBao(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Docker bind mounts in this E2E are not supported on Windows")
 	}

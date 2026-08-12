@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func TestBrokerAutoUnsealWithOpenBaoBeta(t *testing.T) {
+func TestBrokerAutoUnsealWithOpenBao(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Docker bind mounts in this E2E are not supported on Windows")
 	}
