@@ -55,8 +55,8 @@ bao-unseal-agent publish-once -addr 127.0.0.1:8443 -plaintext \
 
 For generic TPM 2.0 evidence, select `generic-tpm2-quote` and the PCR selection
 to quote. The agent obtains the nonce from the broker and submits the raw quote;
-the broker config must enroll the node UID, AK public hash, TPM policy, and the
-agent client-certificate fingerprint for that node:
+the broker's authenticated node lifecycle must enroll the node UID, AK public
+hash, TPM policy, and agent client-certificate fingerprint for that node:
 
 ```sh
 bao-unseal-agent publish-once -addr bao-unseald.openbao.svc:8443 \
@@ -89,3 +89,11 @@ default; `-plaintext` is only for local test brokers.
 `k8s check` verifies broker admin reachability and node evidence freshness. With
 `-token-file`, it also asks the broker to evaluate Kubernetes workload evidence
 for diagnostics without invoking wrap or unwrap.
+
+`k8s nodes enroll`, `k8s nodes list`, and `k8s nodes revoke` manage durable TPM
+node trust through the running broker. They require TLS client credentials
+mapped to the cluster-scoped `node-evidence-admin` role. Enrollment reads the
+approved TPM policy from `-tpm-policy`, replaces the full publisher certificate
+set, and requires an audit reason. Revocation immediately invalidates cached
+verified evidence for the node. The CLI prints a request ID that is also stored
+in the broker audit record.

@@ -2,14 +2,14 @@
 
 Status: draft
 
-Last reviewed: 2026-08-11
+Last reviewed: 2026-08-12
 
 This profile describes the first Kubernetes-oriented broker mode. It combines
 Kubernetes workload identity with node evidence verified by the broker. It is
 intended for the preview project shape. The repository includes preview RBAC
-and deployment manifests plus a standalone node-agent TPM quote publisher, but
-enrollment operations, broader control-plane authorization, and packaging still
-need production hardening.
+and deployment manifests plus a standalone node-agent TPM quote publisher and
+an authenticated node trust lifecycle. Broader control-plane authorization and
+packaging still need production hardening.
 
 See [Kubernetes Profile Examples](../reference/kubernetes-profile.md) for
 configuration snippets and
@@ -61,9 +61,10 @@ over the broker nonce. The broker verifies challenge binding, AK signature,
 quote shape, PCR selection and digest, the configured node UID, the enrolled AK
 public hash, and the TPM policy. The agent's local verification is only a
 self-check. The broker assigns freshness and stores only the provider identity
-and SHA-256 evidence digest. Enrollment and revocation are currently static
-configuration. TPM challenge and publish calls require a configured mTLS client
-certificate fingerprint whose role includes the submitted node name.
+and SHA-256 evidence digest. Node AK policy and publisher scope are durable,
+revisioned broker state. Enrollment and revocation require an mTLS identity with
+the `node-evidence-admin` role for the cluster. TPM challenge and publish calls
+require a publisher certificate authorized by the active node enrollment.
 
 ## Trust Boundaries
 
@@ -113,6 +114,14 @@ The broker `kubernetes` block enables this profile:
 ```json
 {
   "require_client_cert": true,
+  "control_plane": {
+    "identities": {
+      "sha256:abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd": {
+        "roles": ["node-evidence-admin"],
+        "cluster_ids": ["prod-eu1"]
+      }
+    }
+  },
   "kubernetes": {
     "enabled": true,
     "token_review_audience": "bao-unseald",
@@ -123,21 +132,7 @@ The broker `kubernetes` block enables this profile:
     "api_timeout_seconds": 10,
     "allow_unbound_service_account_tokens": false,
     "allow_fake_node_evidence_publish": false,
-    "node_evidence_publish_providers": ["generic-tpm2-quote"],
-    "node_evidence_tpm_policies": {
-      "worker-a": {
-        "node_uid": "2e913a61-62f6-4dcb-98c6-302deda22d2d",
-        "policy": {
-          "mode": "tpm-only",
-          "enrolled_ak_public_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-        }
-      }
-    },
-    "node_evidence_publishers": {
-      "sha256:abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd": {
-        "node_names": ["worker-a"]
-      }
-    }
+    "node_evidence_publish_providers": ["generic-tpm2-quote"]
   }
 }
 ```
@@ -178,9 +173,11 @@ payload. The broker verifies the payload but does not retain or return it.
 
 ## Revocation And Rotation
 
-This profile has two independent revocation levers:
+This profile has three independent revocation levers:
 
 - revoke or remove the workload subject so policy denies future operations;
+- revoke the node trust enrollment, which also removes its cached verified
+  evidence and prevents new TPM challenges or publications;
 - let node evidence expire or remove it from the broker evidence source.
 
 If a node is believed compromised, denial through broker policy is the immediate
@@ -229,6 +226,10 @@ Current tests cover:
   local node evidence;
 - broker provider allow-listing and per-node TPM policy validation for
   `generic-tpm2-quote` publishing;
+- authenticated, cluster-scoped node enrollment, listing, and revocation with
+  durable actor, target, reason, and request correlation in the audit record;
+- enrollment revision checks and immediate cached-evidence invalidation on
+  re-enrollment or revocation;
 - broker admin evidence diagnostics and `bao-unsealctl k8s check -token-file`
   for sanitized workload-token and node-evidence policy results.
 
@@ -237,7 +238,6 @@ Current tests cover:
 This profile does not yet provide:
 
 - production-hardened Kubernetes packaging;
-- authenticated and audited AK enrollment or revocation operations;
 - distinct roles for the remaining control-plane and diagnostic RPCs;
 - a measured-boot policy-update workflow;
 - EK certificate-chain or manufacturer provenance verification;

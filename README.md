@@ -12,9 +12,8 @@ two deployment profiles:
 The repository is a functional alpha, not a production-ready unseal system.
 Local TPM and broker-backed OpenBao restart paths work in test environments,
 including multi-version rotation and three-node Raft coverage. Broker key
-protection, general control-plane role separation, AK enrollment and revocation
-operations, rotation retirement proof, and production packaging remain
-incomplete.
+protection, general control-plane role separation, rotation retirement proof,
+and production packaging remain incomplete.
 
 ## Components
 

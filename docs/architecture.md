@@ -29,7 +29,8 @@ node-evidence correlation work. The broker issues single-use node-evidence
 challenges and verifies raw TPM quotes against a configured node UID, enrolled
 attestation key, and optional PCR policy before storing a digest-only verified
 projection. Broker key material still uses a development protection profile,
-and authenticated AK enrollment and revocation operations are not complete.
+while TPM node AK policy and publisher scope are durable, revisioned broker
+state managed by authenticated and audited control-plane operations.
 
 ### Local TPM mode
 
@@ -51,9 +52,11 @@ The broker exposes four logical planes:
 - diagnostics: sanitized status, audit correlation, and evidence inspection.
 
 These planes currently share one authenticated gRPC endpoint. TPM
-node-evidence challenge and publish calls require an explicitly configured mTLS
-certificate fingerprint with node scope. The other control-plane and
-diagnostic APIs still need distinct authorization roles before production use.
+node-evidence challenge and publish calls require an mTLS publisher certificate
+authorized by the active node enrollment. Node enrollment, listing, and
+revocation require the cluster-scoped `node-evidence-admin` role. The remaining
+control-plane and diagnostic APIs still need distinct authorization roles
+before production use.
 
 ## Key lifecycle
 
