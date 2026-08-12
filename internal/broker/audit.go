@@ -27,6 +27,10 @@ type AuditEvent struct {
 	EvidenceHash  string `json:"evidence_hash,omitempty"`
 	RemoteAddress string `json:"remote_address,omitempty"`
 	ErrorCode     string `json:"error_code,omitempty"`
+	Actor         string `json:"actor,omitempty"`
+	Target        string `json:"target,omitempty"`
+	CorrelationID string `json:"correlation_id,omitempty"`
+	RequestID     string `json:"request_id,omitempty"`
 }
 
 // FileAuditSink writes JSONL audit events to a local file.

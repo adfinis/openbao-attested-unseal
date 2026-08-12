@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
+	"github.com/adfinis/openbao-attested-unseal/internal/nodeevidence"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 )
 
@@ -154,6 +155,7 @@ type RotationVerification struct {
 // Store persists broker state.
 type Store interface {
 	NodeEvidenceStore
+	nodeevidence.EnrollmentRepository
 	Close() error
 	BootstrapKeyring(ctx context.Context, request BootstrapKeyringRequest) error
 	ConfigureDevelopment(ctx context.Context, config Config, key []byte) error
