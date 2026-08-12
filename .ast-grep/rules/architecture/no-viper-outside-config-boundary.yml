@@ -11,4 +11,4 @@ ignores:
   - '**/*_test.go'
 rule:
   pattern: import "github.com/spf13/viper"
-note: Viper must not leak into business logic, protocol, Transit, AAD, registry, or socket packages.
+note: Viper must not leak into domain, application, transport, or adapter packages.

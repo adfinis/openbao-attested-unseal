@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ast-grep/ast-grep/main/schemas/rule.json
+
+id: no-protocol-in-domain
+message: Domain packages must not depend on generated protocol types.
+severity: error
+language: Go
+files:
+  - internal/nodeevidence/**/*.go
+  - internal/keyring/**/*.go
+  - internal/tpm/**/*.go
+  - internal/enrollment/**/*.go
+  - internal/recovery/**/*.go
+rule:
+  any:
+    - pattern: import "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
+    - pattern:
+        context: import $ALIAS "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
+        selector: import_spec
+note: Map protobuf messages into domain types at the transport boundary.

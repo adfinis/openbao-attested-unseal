@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ast-grep/ast-grep/main/schemas/rule.json
+
+id: no-storage-access-from-online-cli
+message: Online CLI commands must use an authenticated control-plane client instead of opening broker state directly.
+severity: warning
+language: Go
+files:
+  - internal/baounsealctl/**/*.go
+ignores:
+  - '**/*_test.go'
+rule:
+  any:
+    - pattern:
+        context: func f() { _, _ = broker.OpenSQLiteStore($$$ARGS) }
+        selector: call_expression
+    - pattern: import "github.com/adfinis/openbao-attested-unseal/internal/storage/sqlite"
+    - pattern:
+        context: import $ALIAS "github.com/adfinis/openbao-attested-unseal/internal/storage/sqlite"
+        selector: import_spec
+note: This remains a warning until existing online commands have migrated to authenticated control-plane APIs.

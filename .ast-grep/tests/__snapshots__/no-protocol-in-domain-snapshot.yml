@@ -1,0 +1,13 @@
+id: no-protocol-in-domain
+snapshots:
+  ? |
+    package p
+
+    import protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
+
+    func use(record *protocolv1.NodeEvidenceRecord) {}
+  : labels:
+    - source: protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
+      style: primary
+      start: 18
+      end: 94

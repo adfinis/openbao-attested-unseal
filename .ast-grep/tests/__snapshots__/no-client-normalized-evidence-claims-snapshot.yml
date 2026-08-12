@@ -1,0 +1,16 @@
+id: no-client-normalized-evidence-claims
+snapshots:
+  ? |
+    package p
+
+    func evidence() *protocolv1.EvidenceEnvelope {
+      return &protocolv1.EvidenceEnvelope{
+        Provider: "development",
+        NormalizedClaims: claims,
+      }
+    }
+  : labels:
+    - source: 'NormalizedClaims: claims'
+      style: primary
+      start: 130
+      end: 154

@@ -1,0 +1,16 @@
+id: no-grpc-server-outside-transport-boundary
+valid:
+  - |
+    package p
+
+    func serve(server Server) error {
+      return server.Serve()
+    }
+invalid:
+  - |
+    package p
+
+    func serve() {
+      server := grpc.NewServer(options...)
+      _ = server
+    }

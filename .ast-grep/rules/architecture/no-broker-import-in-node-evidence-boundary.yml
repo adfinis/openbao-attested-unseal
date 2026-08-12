@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ast-grep/ast-grep/main/schemas/rule.json
+
+id: no-broker-import-in-node-evidence-boundary
+message: Node evidence producers and admin clients must depend on the nodeevidence contract, not the broker runtime.
+severity: error
+language: Go
+files:
+  - internal/baounsealagent/**/*.go
+  - internal/nodeagent/**/*.go
+  - internal/nodeevidence/**/*.go
+  - internal/brokeradmin/**/*.go
+ignores:
+  - '**/*_test.go'
+rule:
+  any:
+    - pattern: import "github.com/adfinis/openbao-attested-unseal/internal/broker"
+    - pattern:
+        context: import $ALIAS "github.com/adfinis/openbao-attested-unseal/internal/broker"
+        selector: import_spec
+note: Depending on broker would reverse the intended dependency direction; use nodeevidence ports and types.

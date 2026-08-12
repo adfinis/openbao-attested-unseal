@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ast-grep/ast-grep/main/schemas/rule.json
+
+id: no-client-normalized-evidence-claims
+message: Evidence clients must not supply claims that appear broker-verified.
+severity: error
+language: Go
+files:
+  - internal/baounsealagent/**/*.go
+  - internal/baounsealctl/**/*.go
+  - internal/brokeradmin/**/*.go
+  - internal/kmsplugin/**/*.go
+  - internal/nodeagent/**/*.go
+ignores:
+  - '**/*_test.go'
+rule:
+  pattern:
+    context: '&protocolv1.EvidenceEnvelope{NormalizedClaims: $CLAIMS}'
+    selector: keyed_element
+note: Only broker-side verification may promote raw evidence to normalized claims.

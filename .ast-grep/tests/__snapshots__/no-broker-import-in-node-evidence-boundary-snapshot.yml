@@ -1,0 +1,13 @@
+id: no-broker-import-in-node-evidence-boundary
+snapshots:
+  ? |
+    package p
+
+    import "github.com/adfinis/openbao-attested-unseal/internal/broker"
+
+    func use(server *broker.Server) {}
+  : labels:
+    - source: import "github.com/adfinis/openbao-attested-unseal/internal/broker"
+      style: primary
+      start: 11
+      end: 78

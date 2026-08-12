@@ -1,0 +1,22 @@
+id: no-sqlite-outside-storage-boundary
+snapshots:
+  ? |
+    package p
+
+    import "database/sql"
+
+    func open() *sql.DB { return nil }
+  : labels:
+    - source: import "database/sql"
+      style: primary
+      start: 11
+      end: 32
+  ? |
+    package p
+
+    import _ "modernc.org/sqlite"
+  : labels:
+    - source: _ "modernc.org/sqlite"
+      style: primary
+      start: 18
+      end: 40

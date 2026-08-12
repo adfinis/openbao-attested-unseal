@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ast-grep/ast-grep/main/schemas/rule.json
+
+id: no-sqlite-outside-storage-boundary
+message: SQLite implementation details belong in the storage adapter boundary.
+severity: error
+language: Go
+files:
+  - internal/**/*.go
+ignores:
+  - internal/broker/sqlite.go
+  - internal/storage/sqlite/**/*.go
+  - '**/*_test.go'
+rule:
+  any:
+    - pattern: import "database/sql"
+    - pattern: import "modernc.org/sqlite"
+    - pattern:
+        context: import $ALIAS "database/sql"
+        selector: import_spec
+    - pattern:
+        context: import $ALIAS "modernc.org/sqlite"
+        selector: import_spec
+note: The legacy broker SQLite implementation is an explicit migration exception; new access belongs under internal/storage/sqlite.

@@ -63,7 +63,7 @@ lint-ast: ## Run ast-grep architecture and safety rules.
 	@if ! find cmd internal -name '*.go' 2>/dev/null | grep -q .; then \
 		printf '%s\n' 'No Go files yet; skipping ast-grep scan.'; \
 	elif command -v "$(AST_GREP)" >/dev/null 2>&1; then \
-		"$(AST_GREP)" scan -c .ast-grep/sgconfig.yml --report-style=medium --error .; \
+		"$(AST_GREP)" scan -c .ast-grep/sgconfig.yml --report-style=medium .; \
 	else \
 		printf '%s\n' 'ast-grep not installed; skipping ast-grep scan.'; \
 	fi

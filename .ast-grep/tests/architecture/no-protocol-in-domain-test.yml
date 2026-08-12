@@ -1,0 +1,16 @@
+id: no-protocol-in-domain
+valid:
+  - |
+    package p
+
+    type Evidence struct {
+      Provider string
+      Payload []byte
+    }
+invalid:
+  - |
+    package p
+
+    import protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
+
+    func use(record *protocolv1.NodeEvidenceRecord) {}
