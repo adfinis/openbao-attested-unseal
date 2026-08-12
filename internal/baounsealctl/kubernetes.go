@@ -69,6 +69,8 @@ func k8sCommand(args []string, stdout io.Writer, stderr io.Writer) error {
 		return k8sEvidenceCommand(args[1:], stdout, stderr)
 	case "publish-node":
 		return k8sPublishNodeCommand(args[1:], stdout, stderr)
+	case "nodes":
+		return k8sNodesCommand(args[1:], stdout, stderr)
 	default:
 		return cli.WithExitCode(cli.ExitUsage, fmt.Errorf("unknown k8s subcommand %q", args[0]))
 	}

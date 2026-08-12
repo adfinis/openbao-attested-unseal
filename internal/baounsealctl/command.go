@@ -43,6 +43,7 @@ const (
 	operationRevoke            = "OPERATION_REVOKE"
 	revocationModeBroker       = "broker"
 	revocationModeLocalTPM     = "local-tpm"
+	commandEnroll              = "enroll"
 )
 
 // Execute runs bao-unsealctl.
@@ -65,7 +66,7 @@ func Execute(info version.Info, args []string, stdout io.Writer, stderr io.Write
 		return initCommand(args[1:], stdout, stderr)
 	case commandStatus:
 		return statusCommand(args[1:], stdout, stderr)
-	case "enroll":
+	case commandEnroll:
 		return enrollCommand(args[1:], stdout, stderr)
 	case "recover":
 		return recoverCommand(args[1:], stdout, stderr)
@@ -605,7 +606,7 @@ func recoverCommand(args []string, stdout io.Writer, stderr io.Writer) error {
 	switch args[0] {
 	case "begin":
 		return recoverBeginCommand(args[1:], stdout, stderr)
-	case "enroll":
+	case commandEnroll:
 		return recoverEnrollCommand(args[1:], stdout, stderr)
 	case "finish":
 		return recoverFinishCommand(args[1:], stdout, stderr)
@@ -2646,6 +2647,7 @@ func printUsage(out io.Writer) {
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl k8s check -addr 127.0.0.1:8443 -node-name kind-worker -token-file token.jwt")
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl k8s evidence list -addr 127.0.0.1:8443")
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl k8s evidence inspect -addr 127.0.0.1:8443 -node-name kind-worker")
+	_, _ = fmt.Fprintln(out, "  bao-unsealctl k8s nodes {enroll|list|revoke} -addr 127.0.0.1:8443")
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl tpm provision -state-path /var/lib/openbao-attested-unseal \\")
 	_, _ = fmt.Fprintln(out, "    -package recovery.json -shares-file shares.json")
 	_, _ = fmt.Fprintln(out, "  bao-unsealctl tpm status -state-path /var/lib/openbao-attested-unseal")
