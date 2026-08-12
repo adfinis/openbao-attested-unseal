@@ -1,0 +1,35 @@
+id: no-runtime-imports-from-domain
+snapshots:
+  ? |
+    package p
+
+    import "github.com/adfinis/openbao-attested-unseal/internal/baounseald"
+
+    func use(runtime *baounseald.Runtime) {}
+  : labels:
+    - source: '"github.com/adfinis/openbao-attested-unseal/internal/baounseald"'
+      style: primary
+      start: 18
+      end: 82
+  ? |
+    package p
+
+    import admin "github.com/adfinis/openbao-attested-unseal/internal/brokeradmin"
+
+    func use(client *admin.Client) {}
+  : labels:
+    - source: admin "github.com/adfinis/openbao-attested-unseal/internal/brokeradmin"
+      style: primary
+      start: 18
+      end: 89
+  ? |
+    package p
+
+    import grpcadapter "github.com/adfinis/openbao-attested-unseal/internal/transport/grpc"
+
+    func use(server *grpcadapter.Server) {}
+  : labels:
+    - source: grpcadapter "github.com/adfinis/openbao-attested-unseal/internal/transport/grpc"
+      style: primary
+      start: 18
+      end: 98

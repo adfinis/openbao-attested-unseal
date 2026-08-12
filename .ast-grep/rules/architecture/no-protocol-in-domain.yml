@@ -11,9 +11,7 @@ files:
   - internal/enrollment/**/*.go
   - internal/recovery/**/*.go
 rule:
-  any:
-    - pattern: import "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
-    - pattern:
-        context: import $ALIAS "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
-        selector: import_spec
+  all:
+    - kind: import_spec
+    - regex: '"github\.com/adfinis/openbao-attested-unseal/internal/protocol(?:/[^"]*)?"'
 note: Map protobuf messages into domain types at the transport boundary.

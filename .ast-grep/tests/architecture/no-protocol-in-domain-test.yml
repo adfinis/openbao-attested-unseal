@@ -14,3 +14,9 @@ invalid:
     import protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 
     func use(record *protocolv1.NodeEvidenceRecord) {}
+  - |
+    package p
+
+    import wire "github.com/adfinis/openbao-attested-unseal/internal/protocol/future/v2"
+
+    func use(record *wire.NodeEvidenceRecord) {}

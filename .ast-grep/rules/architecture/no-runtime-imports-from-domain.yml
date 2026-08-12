@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ast-grep/ast-grep/main/schemas/rule.json
+
+id: no-runtime-imports-from-domain
+message: Domain packages must not depend on runtime, transport, CLI, or adapter packages.
+severity: error
+language: Go
+files:
+  - internal/enrollment/**/*.go
+  - internal/keyring/**/*.go
+  - internal/nodeevidence/**/*.go
+  - internal/recovery/**/*.go
+  - internal/tpm/**/*.go
+ignores:
+  - '**/*_test.go'
+rule:
+  all:
+    - kind: import_spec
+    - regex: '"github\.com/adfinis/openbao-attested-unseal/internal/(?:baounsealagent|baounsealctl|baounseald|broker|brokeradmin|kmsplugin|nodeagent|transport)(?:/[^"]*)?"'
+note: Domain code may depend on domain primitives and ports; map runtime and adapter concerns outside the domain boundary.
