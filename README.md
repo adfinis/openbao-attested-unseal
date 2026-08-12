@@ -1,25 +1,31 @@
 # OpenBao Attested Unseal
 
-`openbao-attested-unseal` is an early-stage attested Auto Unseal project for
-OpenBao. It aims to let OpenBao unwrap seal material from attested node or
-workload identity, with TPM as the first backend.
+`openbao-attested-unseal` is an experimental Auto Unseal implementation for
+OpenBao. It supports the OpenBao 2.6 external KMS plugin contract and explores
+two deployment profiles:
 
-This repository is pre-production. OpenBao KMS plugin support is currently
-available in the OpenBao 2.6.0 beta line, and the project has an initial local
-TPM mode validated by a Docker and `swtpm` smoke test. Brokered attestation,
-Kubernetes workload identity, rotation, revocation, and platform-specific
-providers still need production hardening.
+- brokered unseal, where an internal service authorizes wrap and unwrap
+  operations using workload and node evidence;
+- local TPM unseal, where approved stable nodes hold TPM-sealed copies of the
+  wrapping key and do not require a runtime network service.
 
-## Binaries
+The repository is a functional alpha, not a production-ready unseal system.
+Local TPM and broker-backed OpenBao restart paths work in test environments,
+including multi-version rotation and three-node Raft coverage. Broker key
+protection, general control-plane role separation, AK enrollment and revocation
+operations, rotation retirement proof, and production packaging remain
+incomplete.
+
+## Components
 
 | Binary | Purpose |
-|---|---|
-| `bao-kms-unseal` | OpenBao KMS plugin entrypoint. |
-| `bao-unseald` | Internal-network attested unseal broker daemon. |
-| `bao-unsealctl` | Operator lifecycle CLI for enrollment, recovery, and diagnostics. |
-| `bao-unseal-agent` | Node-local evidence publisher for brokered attestation. |
+| --- | --- |
+| `bao-kms-unseal` | OpenBao external KMS plugin. |
+| `bao-unseald` | Internal-network wrap and unwrap broker. |
+| `bao-unsealctl` | Bootstrap, recovery, rotation, and diagnostics CLI. |
+| `bao-unseal-agent` | Node-local evidence collector and publisher. |
 
-## Local Checks
+## Development checks
 
 ```sh
 make ci-core
@@ -27,12 +33,14 @@ make test-e2e
 make build
 ```
 
-## Docs
+Docker-backed E2E tests are separate from the core quality gate. They cover
+broker mode, local TPM with `swtpm`, Kubernetes RBAC and kind deployment, and a
+three-node OpenBao Raft cluster.
 
-Repository documentation lives in [docs](docs/README.md) as plain Markdown.
+## Documentation
 
-## Status
+Start with the [documentation index](docs/README.md), then read the
+[architecture](docs/architecture.md) and [threat model](docs/security/threat-model.md)
+before evaluating deployment profiles.
 
-Do not use this project for production unseal yet. The threat model, recovery
-model, and attestation policy are still being narrowed as the implementation
-evolves.
+Do not use this project for production unseal yet.

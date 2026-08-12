@@ -2,10 +2,10 @@
 
 Status: draft
 
-Last reviewed: 2026-06-30
+Last reviewed: 2026-08-11
 
 These examples show the current Kubernetes runtime profile contract for
-`bao-unseald`. They are intentionally beta examples, not production deployment
+`bao-unseald`. They are intentionally preview examples, not production deployment
 manifests.
 
 The tracked Kubernetes manifests live under
@@ -26,7 +26,7 @@ The OpenBao KMS plugin emits this evidence when configured with
 token from `kubernetes_token_file`, or from the default in-cluster service
 account token path when that field is omitted.
 
-`node_id` is still required by the broker challenge path. For the current beta
+`node_id` is still required by the broker challenge path. For the current preview
 profile it should match the normalized Kubernetes subject, such as
 `openbao.openbao`.
 
@@ -94,7 +94,7 @@ cluster or against a fake API server.
 
 The Kubernetes verifier normalizes the policy subject as
 `<namespace>.<serviceAccount>`. For an OpenBao Pod running as service account
-`openbao` in namespace `openbao`, the beta development policy subject is
+`openbao` in namespace `openbao`, the preview development policy subject is
 `openbao.openbao`.
 
 ```json
@@ -105,7 +105,7 @@ The Kubernetes verifier normalizes the policy subject as
 }
 ```
 
-This policy mode is a temporary beta policy surface. It authorizes a normalized
+This policy mode is a temporary preview policy surface. It authorizes a normalized
 subject after provider verification. It is not a general-purpose authorization
 language.
 
@@ -130,15 +130,22 @@ TPM identity, Secure Boot, measured boot, confidential launch, or platform
 anti-cloning.
 
 `bao-unseal-agent publish-once`, `bao-unseal-agent run`, and the reusable node
-evidence publisher primitive currently support the same `fake-local` provider
-for tests and local labs. A production node agent still needs a real node
-evidence provider, such as TPM-backed evidence, before this becomes a security
-boundary.
+evidence publisher primitive also support the `generic-tpm2-quote` provider.
+The agent requests a single-use challenge from the broker, collects a raw TPM
+2.0 quote over the broker nonce, performs a local self-check, and submits the
+raw evidence. The broker verifies the nonce and challenge ID, AK signature,
+quote shape, PCR selection and digest, configured node UID, enrolled AK public
+hash, and TPM policy. Only then does it assign freshness and store a verified
+metadata projection plus the payload digest. Static enrollment configuration
+and the lack of authenticated enrollment and revocation operations still make
+this a preview rather than a complete production boundary. TPM challenge and
+publish calls require a configured mTLS certificate fingerprint scoped to the
+submitted node name.
 
 Broker diagnostics expose only node evidence metadata: cluster, node name,
 optional node UID, provider, evidence hash, timestamps, and freshness status.
 They do not return submitted raw claim lists, broker error payloads, policy
-fields, or future raw evidence bodies.
+fields, or raw evidence bodies.
 
 For local broker tests, publish synthetic node evidence through the broker
 admin API:
@@ -163,6 +170,26 @@ bao-unseal-agent run \
   -interval 1m
 ```
 
+For TPM-backed evidence, enable `generic-tpm2-quote` in broker
+`node_evidence_publish_providers`, add the node to
+`node_evidence_tpm_policies`, authorize the agent certificate under
+`node_evidence_publishers`, and run the agent with TPM flags. This provider
+requires TLS with client-certificate verification:
+
+```sh
+bao-unseal-agent run \
+  -addr bao-unseald.openbao.svc:8443 \
+  -cluster-id prod-eu1 \
+  -node-name "$NODE_NAME" \
+  -node-uid "$NODE_UID" \
+  -provider-id generic-tpm2-quote \
+  -tpm-device /dev/tpmrm0 \
+  -tpm-pcr-bank sha256 \
+  -tpm-pcrs 7 \
+  -ttl 5m \
+  -interval 1m
+```
+
 The operator CLI keeps a lab-oriented helper for the same fake-local publish
 path:
 
@@ -174,10 +201,13 @@ bao-unsealctl k8s publish-node \
   -node-name kind-worker
 ```
 
-The current admin publish path writes to the broker node evidence store and
-requires `allow_fake_node_evidence_publish = true` in the broker Kubernetes
-config. In normal broker runtime this store is SQLite-backed; in unit tests it
-can be an in-memory cache.
+The admin publish path verifies a challenge-bound submission before writing to
+the broker node evidence store. It requires either
+`allow_fake_node_evidence_publish = true` for `fake-local`, or both the
+`generic-tpm2-quote` allow-list entry, matching enrolled node policy, and an
+authorized mTLS client certificate scoped to that node. In normal broker
+runtime this store is SQLite-backed; in unit tests it can be an in-memory
+cache.
 
 Use `bao-unsealctl k8s check` to classify broker-side node evidence state for
 one node:
@@ -207,7 +237,7 @@ bao-unsealctl k8s check \
 The workload check reports the verified subject, sanitized workload placement
 metadata, workload decision, and redacted node evidence metadata. It does not
 return the workload token, raw evidence payload, normalized claim list, or
-future raw node evidence bodies.
+raw node evidence bodies.
 
 ## OpenBao Seal Config
 
@@ -228,6 +258,6 @@ seal "attested-unseal" {
 `kubernetes_token_file` can be omitted for standard in-cluster mounts. It is
 shown here to make the token source explicit.
 
-In this beta profile, `node_id` is challenge correlation input and should equal
+In this preview profile, `node_id` is challenge correlation input and should equal
 the normalized Kubernetes subject. The Kubernetes verifier still derives the
 actual policy subject from the TokenReview result, not from `node_id`.
