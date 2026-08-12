@@ -60,8 +60,7 @@ type AdminService struct {
 	policyID                     string
 	allowFakeNodeEvidencePublish bool
 	nodeEvidencePublishProviders []string
-	nodeEvidenceTPMPolicies      map[string]TPMNodeEvidencePolicy
-	nodeEvidencePublishers       map[string]NodeEvidencePublisher
+	nodeEvidenceEnrollments      nodeevidence.EnrollmentRepository
 	clock                        func() time.Time
 }
 
@@ -79,8 +78,7 @@ type adminServiceConfig struct {
 	policyID                     string
 	allowFakeNodeEvidencePublish bool
 	nodeEvidencePublishProviders []string
-	nodeEvidenceTPMPolicies      map[string]TPMNodeEvidencePolicy
-	nodeEvidencePublishers       map[string]NodeEvidencePublisher
+	nodeEvidenceEnrollments      nodeevidence.EnrollmentRepository
 }
 
 // NewAdminService creates the broker admin service.
@@ -119,8 +117,7 @@ func newAdminService(config adminServiceConfig) AdminService {
 		policyID:                     config.policyID,
 		allowFakeNodeEvidencePublish: config.allowFakeNodeEvidencePublish,
 		nodeEvidencePublishProviders: slices.Clone(config.nodeEvidencePublishProviders),
-		nodeEvidenceTPMPolicies:      cloneTPMNodeEvidencePolicies(config.nodeEvidenceTPMPolicies),
-		nodeEvidencePublishers:       cloneNodeEvidencePublishers(config.nodeEvidencePublishers),
+		nodeEvidenceEnrollments:      config.nodeEvidenceEnrollments,
 		clock:                        time.Now,
 	}
 }
@@ -168,12 +165,13 @@ func (s AdminService) ChallengeNodeEvidence(
 		s.auditNodeEvidence(ctx, adminOperationNodeEvidenceChallenge, request.ClusterID, request.NodeName, "", decision)
 		return &protocolv1.NodeEvidenceChallengeResponse{Decision: decision.Proto()}, nil
 	}
-	if err := s.validateNodeEvidenceIdentity(request.NodeName, request.NodeUID, request.Provider); err != nil {
-		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED, err.Error())
-		s.auditNodeEvidence(ctx, adminOperationNodeEvidenceChallenge, request.ClusterID, request.NodeName, "", decision)
-		return &protocolv1.NodeEvidenceChallengeResponse{Decision: decision.Proto()}, nil
-	}
-	publisherID, code, err := s.authorizeNodeEvidencePublisher(ctx, request.NodeName, request.Provider)
+	_, publisherID, code, err := s.authorizeNodeEvidencePublisher(
+		ctx,
+		request.ClusterID,
+		request.NodeName,
+		request.NodeUID,
+		request.Provider,
+	)
 	if err != nil {
 		decision := Deny(s.policyID, code, err.Error())
 		s.auditNodeEvidence(ctx, adminOperationNodeEvidenceChallenge, request.ClusterID, request.NodeName, "", decision)
@@ -272,23 +270,13 @@ func (s AdminService) PublishNodeEvidence(
 		)
 		return &protocolv1.NodeEvidencePublishResponse{Decision: decision.Proto()}, nil
 	}
-	if err := s.validateNodeEvidenceIdentity(
+	enrollment, publisherID, code, err := s.authorizeNodeEvidencePublisher(
+		ctx,
+		submission.ClusterID,
 		submission.NodeName,
 		submission.NodeUID,
 		submission.Provider,
-	); err != nil {
-		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED, err.Error())
-		s.auditNodeEvidence(
-			ctx,
-			adminOperationNodeEvidencePublish,
-			submission.ClusterID,
-			submission.NodeName,
-			payloadHash,
-			decision,
-		)
-		return &protocolv1.NodeEvidencePublishResponse{Decision: decision.Proto()}, nil
-	}
-	publisherID, code, err := s.authorizeNodeEvidencePublisher(ctx, submission.NodeName, submission.Provider)
+	)
 	if err != nil {
 		decision := Deny(s.policyID, code, err.Error())
 		s.auditNodeEvidence(
@@ -328,7 +316,7 @@ func (s AdminService) PublishNodeEvidence(
 		)
 		return &protocolv1.NodeEvidencePublishResponse{Decision: decision.Proto()}, nil
 	}
-	evidence, err := verifyNodeEvidenceSubmission(submission, nonce, s.nodeEvidenceTPMPolicies)
+	evidence, err := verifyNodeEvidenceSubmission(submission, nonce, enrollment)
 	if err != nil {
 		decision := Deny(
 			s.policyID,
@@ -380,7 +368,28 @@ func (s AdminService) PublishNodeEvidence(
 			Decision: decision.Proto(),
 		}, nil
 	}
-	if err := s.nodeEvidence.PutNodeEvidence(ctx, evidence); err != nil {
+	if submission.Provider == nodeevidence.ProviderTPM2Quote {
+		err = s.nodeEvidenceEnrollments.PutEnrolledNodeEvidence(ctx, evidence, enrollment.Revision)
+	} else {
+		err = s.nodeEvidence.PutNodeEvidence(ctx, evidence)
+	}
+	if err != nil {
+		if errors.Is(err, nodeevidence.ErrEnrollmentChanged) {
+			decision := Deny(
+				s.policyID,
+				protocolv1.ErrorCode_ERROR_CODE_PERMISSION_DENIED,
+				"node evidence enrollment changed during verification",
+			)
+			s.auditNodeEvidence(
+				ctx,
+				adminOperationNodeEvidencePublish,
+				evidence.ClusterID,
+				evidence.NodeName,
+				evidence.EvidenceHash,
+				decision,
+			)
+			return &protocolv1.NodeEvidencePublishResponse{Decision: decision.Proto()}, nil
+		}
 		decision := Deny(s.policyID, protocolv1.ErrorCode_ERROR_CODE_INVALID_REQUEST, err.Error())
 		s.auditNodeEvidence(
 			ctx,
@@ -754,17 +763,6 @@ func nodeEvidenceChallengeDeny(policyID string, err error) PolicyDecision {
 	default:
 		return Deny(policyID, protocolv1.ErrorCode_ERROR_CODE_INTERNAL, "node evidence challenge validation failed")
 	}
-}
-
-func (s AdminService) validateNodeEvidenceIdentity(nodeName string, nodeUID string, provider string) error {
-	if provider != nodeevidence.ProviderTPM2Quote {
-		return nil
-	}
-	enrolled, ok := s.nodeEvidenceTPMPolicies[nodeName]
-	if !ok || strings.TrimSpace(enrolled.NodeUID) != nodeUID {
-		return errors.New("node TPM identity is not enrolled")
-	}
-	return nil
 }
 
 func (s AdminService) acceptedNodeEvidenceTTL(requested time.Duration) time.Duration {

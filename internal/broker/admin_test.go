@@ -356,8 +356,9 @@ func TestAdminServiceRejectsTPMProviderWithoutNodeEnrollment(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	cache := NewMemoryNodeEvidenceCache()
 	service := newAdminService(adminServiceConfig{
-		nodeEvidence: cache,
-		policyID:     "development",
+		nodeEvidence:            cache,
+		nodeEvidenceEnrollments: nodeevidence.NewMemoryEnrollmentRepository(cache),
+		policyID:                "development",
 		nodeEvidencePublishProviders: []string{
 			NodeEvidenceProviderTPM2Quote,
 		},

@@ -1486,6 +1486,650 @@ func (x *NodeEvidencePublishResponse) GetDecision() *PolicyDecision {
 	return nil
 }
 
+type NodeEvidencePCRPolicy struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Hash           string                 `protobuf:"bytes,1,opt,name=hash,proto3" json:"hash,omitempty"`
+	Pcrs           []uint32               `protobuf:"varint,2,rep,packed,name=pcrs,proto3" json:"pcrs,omitempty"`
+	ExpectedDigest string                 `protobuf:"bytes,3,opt,name=expected_digest,json=expectedDigest,proto3" json:"expected_digest,omitempty"`
+	Profile        string                 `protobuf:"bytes,4,opt,name=profile,proto3" json:"profile,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *NodeEvidencePCRPolicy) Reset() {
+	*x = NodeEvidencePCRPolicy{}
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeEvidencePCRPolicy) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeEvidencePCRPolicy) ProtoMessage() {}
+
+func (x *NodeEvidencePCRPolicy) ProtoReflect() protoreflect.Message {
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeEvidencePCRPolicy.ProtoReflect.Descriptor instead.
+func (*NodeEvidencePCRPolicy) Descriptor() ([]byte, []int) {
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *NodeEvidencePCRPolicy) GetHash() string {
+	if x != nil {
+		return x.Hash
+	}
+	return ""
+}
+
+func (x *NodeEvidencePCRPolicy) GetPcrs() []uint32 {
+	if x != nil {
+		return x.Pcrs
+	}
+	return nil
+}
+
+func (x *NodeEvidencePCRPolicy) GetExpectedDigest() string {
+	if x != nil {
+		return x.ExpectedDigest
+	}
+	return ""
+}
+
+func (x *NodeEvidencePCRPolicy) GetProfile() string {
+	if x != nil {
+		return x.Profile
+	}
+	return ""
+}
+
+type NodeEvidenceTPMPolicy struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Mode                 string                 `protobuf:"bytes,1,opt,name=mode,proto3" json:"mode,omitempty"`
+	EnrolledAkPublicHash string                 `protobuf:"bytes,2,opt,name=enrolled_ak_public_hash,json=enrolledAkPublicHash,proto3" json:"enrolled_ak_public_hash,omitempty"`
+	PcrPolicy            *NodeEvidencePCRPolicy `protobuf:"bytes,3,opt,name=pcr_policy,json=pcrPolicy,proto3" json:"pcr_policy,omitempty"`
+	ProviderProfile      string                 `protobuf:"bytes,4,opt,name=provider_profile,json=providerProfile,proto3" json:"provider_profile,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *NodeEvidenceTPMPolicy) Reset() {
+	*x = NodeEvidenceTPMPolicy{}
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeEvidenceTPMPolicy) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeEvidenceTPMPolicy) ProtoMessage() {}
+
+func (x *NodeEvidenceTPMPolicy) ProtoReflect() protoreflect.Message {
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeEvidenceTPMPolicy.ProtoReflect.Descriptor instead.
+func (*NodeEvidenceTPMPolicy) Descriptor() ([]byte, []int) {
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *NodeEvidenceTPMPolicy) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *NodeEvidenceTPMPolicy) GetEnrolledAkPublicHash() string {
+	if x != nil {
+		return x.EnrolledAkPublicHash
+	}
+	return ""
+}
+
+func (x *NodeEvidenceTPMPolicy) GetPcrPolicy() *NodeEvidencePCRPolicy {
+	if x != nil {
+		return x.PcrPolicy
+	}
+	return nil
+}
+
+func (x *NodeEvidenceTPMPolicy) GetProviderProfile() string {
+	if x != nil {
+		return x.ProviderProfile
+	}
+	return ""
+}
+
+type NodeEvidenceEnrollmentRecord struct {
+	state                      protoimpl.MessageState `protogen:"open.v1"`
+	ClusterId                  string                 `protobuf:"bytes,1,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	NodeName                   string                 `protobuf:"bytes,2,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
+	NodeUid                    string                 `protobuf:"bytes,3,opt,name=node_uid,json=nodeUid,proto3" json:"node_uid,omitempty"`
+	ProviderId                 string                 `protobuf:"bytes,4,opt,name=provider_id,json=providerId,proto3" json:"provider_id,omitempty"`
+	TpmPolicy                  *NodeEvidenceTPMPolicy `protobuf:"bytes,5,opt,name=tpm_policy,json=tpmPolicy,proto3" json:"tpm_policy,omitempty"`
+	PublisherCertificateSha256 []string               `protobuf:"bytes,6,rep,name=publisher_certificate_sha256,json=publisherCertificateSha256,proto3" json:"publisher_certificate_sha256,omitempty"`
+	Revision                   uint64                 `protobuf:"varint,7,opt,name=revision,proto3" json:"revision,omitempty"`
+	EnrolledUnixSeconds        int64                  `protobuf:"varint,8,opt,name=enrolled_unix_seconds,json=enrolledUnixSeconds,proto3" json:"enrolled_unix_seconds,omitempty"`
+	UpdatedUnixSeconds         int64                  `protobuf:"varint,9,opt,name=updated_unix_seconds,json=updatedUnixSeconds,proto3" json:"updated_unix_seconds,omitempty"`
+	RevokedUnixSeconds         int64                  `protobuf:"varint,10,opt,name=revoked_unix_seconds,json=revokedUnixSeconds,proto3" json:"revoked_unix_seconds,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
+}
+
+func (x *NodeEvidenceEnrollmentRecord) Reset() {
+	*x = NodeEvidenceEnrollmentRecord{}
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeEvidenceEnrollmentRecord) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeEvidenceEnrollmentRecord) ProtoMessage() {}
+
+func (x *NodeEvidenceEnrollmentRecord) ProtoReflect() protoreflect.Message {
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeEvidenceEnrollmentRecord.ProtoReflect.Descriptor instead.
+func (*NodeEvidenceEnrollmentRecord) Descriptor() ([]byte, []int) {
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *NodeEvidenceEnrollmentRecord) GetClusterId() string {
+	if x != nil {
+		return x.ClusterId
+	}
+	return ""
+}
+
+func (x *NodeEvidenceEnrollmentRecord) GetNodeName() string {
+	if x != nil {
+		return x.NodeName
+	}
+	return ""
+}
+
+func (x *NodeEvidenceEnrollmentRecord) GetNodeUid() string {
+	if x != nil {
+		return x.NodeUid
+	}
+	return ""
+}
+
+func (x *NodeEvidenceEnrollmentRecord) GetProviderId() string {
+	if x != nil {
+		return x.ProviderId
+	}
+	return ""
+}
+
+func (x *NodeEvidenceEnrollmentRecord) GetTpmPolicy() *NodeEvidenceTPMPolicy {
+	if x != nil {
+		return x.TpmPolicy
+	}
+	return nil
+}
+
+func (x *NodeEvidenceEnrollmentRecord) GetPublisherCertificateSha256() []string {
+	if x != nil {
+		return x.PublisherCertificateSha256
+	}
+	return nil
+}
+
+func (x *NodeEvidenceEnrollmentRecord) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *NodeEvidenceEnrollmentRecord) GetEnrolledUnixSeconds() int64 {
+	if x != nil {
+		return x.EnrolledUnixSeconds
+	}
+	return 0
+}
+
+func (x *NodeEvidenceEnrollmentRecord) GetUpdatedUnixSeconds() int64 {
+	if x != nil {
+		return x.UpdatedUnixSeconds
+	}
+	return 0
+}
+
+func (x *NodeEvidenceEnrollmentRecord) GetRevokedUnixSeconds() int64 {
+	if x != nil {
+		return x.RevokedUnixSeconds
+	}
+	return 0
+}
+
+type NodeEvidenceEnrollmentRequest struct {
+	state                      protoimpl.MessageState `protogen:"open.v1"`
+	ClusterId                  string                 `protobuf:"bytes,1,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	NodeName                   string                 `protobuf:"bytes,2,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
+	NodeUid                    string                 `protobuf:"bytes,3,opt,name=node_uid,json=nodeUid,proto3" json:"node_uid,omitempty"`
+	ProviderId                 string                 `protobuf:"bytes,4,opt,name=provider_id,json=providerId,proto3" json:"provider_id,omitempty"`
+	TpmPolicy                  *NodeEvidenceTPMPolicy `protobuf:"bytes,5,opt,name=tpm_policy,json=tpmPolicy,proto3" json:"tpm_policy,omitempty"`
+	PublisherCertificateSha256 []string               `protobuf:"bytes,6,rep,name=publisher_certificate_sha256,json=publisherCertificateSha256,proto3" json:"publisher_certificate_sha256,omitempty"`
+	Reason                     string                 `protobuf:"bytes,7,opt,name=reason,proto3" json:"reason,omitempty"`
+	Audit                      *AuditContext          `protobuf:"bytes,8,opt,name=audit,proto3" json:"audit,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
+}
+
+func (x *NodeEvidenceEnrollmentRequest) Reset() {
+	*x = NodeEvidenceEnrollmentRequest{}
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeEvidenceEnrollmentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeEvidenceEnrollmentRequest) ProtoMessage() {}
+
+func (x *NodeEvidenceEnrollmentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeEvidenceEnrollmentRequest.ProtoReflect.Descriptor instead.
+func (*NodeEvidenceEnrollmentRequest) Descriptor() ([]byte, []int) {
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *NodeEvidenceEnrollmentRequest) GetClusterId() string {
+	if x != nil {
+		return x.ClusterId
+	}
+	return ""
+}
+
+func (x *NodeEvidenceEnrollmentRequest) GetNodeName() string {
+	if x != nil {
+		return x.NodeName
+	}
+	return ""
+}
+
+func (x *NodeEvidenceEnrollmentRequest) GetNodeUid() string {
+	if x != nil {
+		return x.NodeUid
+	}
+	return ""
+}
+
+func (x *NodeEvidenceEnrollmentRequest) GetProviderId() string {
+	if x != nil {
+		return x.ProviderId
+	}
+	return ""
+}
+
+func (x *NodeEvidenceEnrollmentRequest) GetTpmPolicy() *NodeEvidenceTPMPolicy {
+	if x != nil {
+		return x.TpmPolicy
+	}
+	return nil
+}
+
+func (x *NodeEvidenceEnrollmentRequest) GetPublisherCertificateSha256() []string {
+	if x != nil {
+		return x.PublisherCertificateSha256
+	}
+	return nil
+}
+
+func (x *NodeEvidenceEnrollmentRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *NodeEvidenceEnrollmentRequest) GetAudit() *AuditContext {
+	if x != nil {
+		return x.Audit
+	}
+	return nil
+}
+
+type NodeEvidenceEnrollmentResponse struct {
+	state         protoimpl.MessageState        `protogen:"open.v1"`
+	Enrollment    *NodeEvidenceEnrollmentRecord `protobuf:"bytes,1,opt,name=enrollment,proto3" json:"enrollment,omitempty"`
+	Decision      *PolicyDecision               `protobuf:"bytes,2,opt,name=decision,proto3" json:"decision,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NodeEvidenceEnrollmentResponse) Reset() {
+	*x = NodeEvidenceEnrollmentResponse{}
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeEvidenceEnrollmentResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeEvidenceEnrollmentResponse) ProtoMessage() {}
+
+func (x *NodeEvidenceEnrollmentResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeEvidenceEnrollmentResponse.ProtoReflect.Descriptor instead.
+func (*NodeEvidenceEnrollmentResponse) Descriptor() ([]byte, []int) {
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *NodeEvidenceEnrollmentResponse) GetEnrollment() *NodeEvidenceEnrollmentRecord {
+	if x != nil {
+		return x.Enrollment
+	}
+	return nil
+}
+
+func (x *NodeEvidenceEnrollmentResponse) GetDecision() *PolicyDecision {
+	if x != nil {
+		return x.Decision
+	}
+	return nil
+}
+
+type NodeEvidenceRevocationRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ClusterId     string                 `protobuf:"bytes,1,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	NodeName      string                 `protobuf:"bytes,2,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
+	Reason        string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	Audit         *AuditContext          `protobuf:"bytes,4,opt,name=audit,proto3" json:"audit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NodeEvidenceRevocationRequest) Reset() {
+	*x = NodeEvidenceRevocationRequest{}
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeEvidenceRevocationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeEvidenceRevocationRequest) ProtoMessage() {}
+
+func (x *NodeEvidenceRevocationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeEvidenceRevocationRequest.ProtoReflect.Descriptor instead.
+func (*NodeEvidenceRevocationRequest) Descriptor() ([]byte, []int) {
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *NodeEvidenceRevocationRequest) GetClusterId() string {
+	if x != nil {
+		return x.ClusterId
+	}
+	return ""
+}
+
+func (x *NodeEvidenceRevocationRequest) GetNodeName() string {
+	if x != nil {
+		return x.NodeName
+	}
+	return ""
+}
+
+func (x *NodeEvidenceRevocationRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *NodeEvidenceRevocationRequest) GetAudit() *AuditContext {
+	if x != nil {
+		return x.Audit
+	}
+	return nil
+}
+
+type NodeEvidenceRevocationResponse struct {
+	state         protoimpl.MessageState        `protogen:"open.v1"`
+	Enrollment    *NodeEvidenceEnrollmentRecord `protobuf:"bytes,1,opt,name=enrollment,proto3" json:"enrollment,omitempty"`
+	Decision      *PolicyDecision               `protobuf:"bytes,2,opt,name=decision,proto3" json:"decision,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NodeEvidenceRevocationResponse) Reset() {
+	*x = NodeEvidenceRevocationResponse{}
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeEvidenceRevocationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeEvidenceRevocationResponse) ProtoMessage() {}
+
+func (x *NodeEvidenceRevocationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeEvidenceRevocationResponse.ProtoReflect.Descriptor instead.
+func (*NodeEvidenceRevocationResponse) Descriptor() ([]byte, []int) {
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *NodeEvidenceRevocationResponse) GetEnrollment() *NodeEvidenceEnrollmentRecord {
+	if x != nil {
+		return x.Enrollment
+	}
+	return nil
+}
+
+func (x *NodeEvidenceRevocationResponse) GetDecision() *PolicyDecision {
+	if x != nil {
+		return x.Decision
+	}
+	return nil
+}
+
+type NodeEvidenceEnrollmentListRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ClusterId      string                 `protobuf:"bytes,1,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	NodeName       string                 `protobuf:"bytes,2,opt,name=node_name,json=nodeName,proto3" json:"node_name,omitempty"`
+	IncludeRevoked bool                   `protobuf:"varint,3,opt,name=include_revoked,json=includeRevoked,proto3" json:"include_revoked,omitempty"`
+	Audit          *AuditContext          `protobuf:"bytes,4,opt,name=audit,proto3" json:"audit,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *NodeEvidenceEnrollmentListRequest) Reset() {
+	*x = NodeEvidenceEnrollmentListRequest{}
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeEvidenceEnrollmentListRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeEvidenceEnrollmentListRequest) ProtoMessage() {}
+
+func (x *NodeEvidenceEnrollmentListRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeEvidenceEnrollmentListRequest.ProtoReflect.Descriptor instead.
+func (*NodeEvidenceEnrollmentListRequest) Descriptor() ([]byte, []int) {
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *NodeEvidenceEnrollmentListRequest) GetClusterId() string {
+	if x != nil {
+		return x.ClusterId
+	}
+	return ""
+}
+
+func (x *NodeEvidenceEnrollmentListRequest) GetNodeName() string {
+	if x != nil {
+		return x.NodeName
+	}
+	return ""
+}
+
+func (x *NodeEvidenceEnrollmentListRequest) GetIncludeRevoked() bool {
+	if x != nil {
+		return x.IncludeRevoked
+	}
+	return false
+}
+
+func (x *NodeEvidenceEnrollmentListRequest) GetAudit() *AuditContext {
+	if x != nil {
+		return x.Audit
+	}
+	return nil
+}
+
+type NodeEvidenceEnrollmentListResponse struct {
+	state         protoimpl.MessageState          `protogen:"open.v1"`
+	Enrollments   []*NodeEvidenceEnrollmentRecord `protobuf:"bytes,1,rep,name=enrollments,proto3" json:"enrollments,omitempty"`
+	Decision      *PolicyDecision                 `protobuf:"bytes,2,opt,name=decision,proto3" json:"decision,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NodeEvidenceEnrollmentListResponse) Reset() {
+	*x = NodeEvidenceEnrollmentListResponse{}
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeEvidenceEnrollmentListResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeEvidenceEnrollmentListResponse) ProtoMessage() {}
+
+func (x *NodeEvidenceEnrollmentListResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeEvidenceEnrollmentListResponse.ProtoReflect.Descriptor instead.
+func (*NodeEvidenceEnrollmentListResponse) Descriptor() ([]byte, []int) {
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *NodeEvidenceEnrollmentListResponse) GetEnrollments() []*NodeEvidenceEnrollmentRecord {
+	if x != nil {
+		return x.Enrollments
+	}
+	return nil
+}
+
+func (x *NodeEvidenceEnrollmentListResponse) GetDecision() *PolicyDecision {
+	if x != nil {
+		return x.Decision
+	}
+	return nil
+}
+
 type WorkloadIdentity struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Namespace      string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
@@ -1500,7 +2144,7 @@ type WorkloadIdentity struct {
 
 func (x *WorkloadIdentity) Reset() {
 	*x = WorkloadIdentity{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[17]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1512,7 +2156,7 @@ func (x *WorkloadIdentity) String() string {
 func (*WorkloadIdentity) ProtoMessage() {}
 
 func (x *WorkloadIdentity) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[17]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1525,7 +2169,7 @@ func (x *WorkloadIdentity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkloadIdentity.ProtoReflect.Descriptor instead.
 func (*WorkloadIdentity) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{17}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *WorkloadIdentity) GetNamespace() string {
@@ -1582,7 +2226,7 @@ type EvidenceCheckRequest struct {
 
 func (x *EvidenceCheckRequest) Reset() {
 	*x = EvidenceCheckRequest{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[18]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1594,7 +2238,7 @@ func (x *EvidenceCheckRequest) String() string {
 func (*EvidenceCheckRequest) ProtoMessage() {}
 
 func (x *EvidenceCheckRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[18]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1607,7 +2251,7 @@ func (x *EvidenceCheckRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EvidenceCheckRequest.ProtoReflect.Descriptor instead.
 func (*EvidenceCheckRequest) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{18}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *EvidenceCheckRequest) GetClusterId() string {
@@ -1650,7 +2294,7 @@ type EvidenceCheckResponse struct {
 
 func (x *EvidenceCheckResponse) Reset() {
 	*x = EvidenceCheckResponse{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[19]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1662,7 +2306,7 @@ func (x *EvidenceCheckResponse) String() string {
 func (*EvidenceCheckResponse) ProtoMessage() {}
 
 func (x *EvidenceCheckResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[19]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1675,7 +2319,7 @@ func (x *EvidenceCheckResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EvidenceCheckResponse.ProtoReflect.Descriptor instead.
 func (*EvidenceCheckResponse) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{19}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *EvidenceCheckResponse) GetDecision() *PolicyDecision {
@@ -1717,7 +2361,7 @@ type PolicyDecision struct {
 
 func (x *PolicyDecision) Reset() {
 	*x = PolicyDecision{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[20]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1729,7 +2373,7 @@ func (x *PolicyDecision) String() string {
 func (*PolicyDecision) ProtoMessage() {}
 
 func (x *PolicyDecision) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[20]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1742,7 +2386,7 @@ func (x *PolicyDecision) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PolicyDecision.ProtoReflect.Descriptor instead.
 func (*PolicyDecision) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{20}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *PolicyDecision) GetState() PolicyDecisionState {
@@ -1778,7 +2422,7 @@ type WrappedBlob struct {
 
 func (x *WrappedBlob) Reset() {
 	*x = WrappedBlob{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[21]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1790,7 +2434,7 @@ func (x *WrappedBlob) String() string {
 func (*WrappedBlob) ProtoMessage() {}
 
 func (x *WrappedBlob) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[21]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1803,7 +2447,7 @@ func (x *WrappedBlob) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WrappedBlob.ProtoReflect.Descriptor instead.
 func (*WrappedBlob) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{21}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *WrappedBlob) GetCiphertext() []byte {
@@ -1847,7 +2491,7 @@ type WrapRequest struct {
 
 func (x *WrapRequest) Reset() {
 	*x = WrapRequest{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[22]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1859,7 +2503,7 @@ func (x *WrapRequest) String() string {
 func (*WrapRequest) ProtoMessage() {}
 
 func (x *WrapRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[22]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1872,7 +2516,7 @@ func (x *WrapRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WrapRequest.ProtoReflect.Descriptor instead.
 func (*WrapRequest) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{22}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *WrapRequest) GetRequestedKey() *KeyRef {
@@ -1920,7 +2564,7 @@ type WrapResponse struct {
 
 func (x *WrapResponse) Reset() {
 	*x = WrapResponse{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[23]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1932,7 +2576,7 @@ func (x *WrapResponse) String() string {
 func (*WrapResponse) ProtoMessage() {}
 
 func (x *WrapResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[23]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1945,7 +2589,7 @@ func (x *WrapResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WrapResponse.ProtoReflect.Descriptor instead.
 func (*WrapResponse) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{23}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *WrapResponse) GetBlob() *WrappedBlob {
@@ -1974,7 +2618,7 @@ type UnwrapRequest struct {
 
 func (x *UnwrapRequest) Reset() {
 	*x = UnwrapRequest{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[24]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1986,7 +2630,7 @@ func (x *UnwrapRequest) String() string {
 func (*UnwrapRequest) ProtoMessage() {}
 
 func (x *UnwrapRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[24]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1999,7 +2643,7 @@ func (x *UnwrapRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnwrapRequest.ProtoReflect.Descriptor instead.
 func (*UnwrapRequest) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{24}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *UnwrapRequest) GetBlob() *WrappedBlob {
@@ -2040,7 +2684,7 @@ type UnwrapResponse struct {
 
 func (x *UnwrapResponse) Reset() {
 	*x = UnwrapResponse{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[25]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2052,7 +2696,7 @@ func (x *UnwrapResponse) String() string {
 func (*UnwrapResponse) ProtoMessage() {}
 
 func (x *UnwrapResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[25]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2065,7 +2709,7 @@ func (x *UnwrapResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnwrapResponse.ProtoReflect.Descriptor instead.
 func (*UnwrapResponse) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{25}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *UnwrapResponse) GetPlaintext() []byte {
@@ -2092,7 +2736,7 @@ type StatusRequest struct {
 
 func (x *StatusRequest) Reset() {
 	*x = StatusRequest{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[26]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2104,7 +2748,7 @@ func (x *StatusRequest) String() string {
 func (*StatusRequest) ProtoMessage() {}
 
 func (x *StatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[26]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2117,7 +2761,7 @@ func (x *StatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusRequest.ProtoReflect.Descriptor instead.
 func (*StatusRequest) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{26}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *StatusRequest) GetClusterId() string {
@@ -2146,7 +2790,7 @@ type StatusResponse struct {
 
 func (x *StatusResponse) Reset() {
 	*x = StatusResponse{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[27]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2158,7 +2802,7 @@ func (x *StatusResponse) String() string {
 func (*StatusResponse) ProtoMessage() {}
 
 func (x *StatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[27]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2171,7 +2815,7 @@ func (x *StatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusResponse.ProtoReflect.Descriptor instead.
 func (*StatusResponse) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{27}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *StatusResponse) GetKeys() []*KeyVersion {
@@ -2211,7 +2855,7 @@ type EnrollmentStatusRequest struct {
 
 func (x *EnrollmentStatusRequest) Reset() {
 	*x = EnrollmentStatusRequest{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[28]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2223,7 +2867,7 @@ func (x *EnrollmentStatusRequest) String() string {
 func (*EnrollmentStatusRequest) ProtoMessage() {}
 
 func (x *EnrollmentStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[28]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2236,7 +2880,7 @@ func (x *EnrollmentStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnrollmentStatusRequest.ProtoReflect.Descriptor instead.
 func (*EnrollmentStatusRequest) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{28}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *EnrollmentStatusRequest) GetAudit() *AuditContext {
@@ -2256,7 +2900,7 @@ type EnrollmentStatusResponse struct {
 
 func (x *EnrollmentStatusResponse) Reset() {
 	*x = EnrollmentStatusResponse{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[29]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2268,7 +2912,7 @@ func (x *EnrollmentStatusResponse) String() string {
 func (*EnrollmentStatusResponse) ProtoMessage() {}
 
 func (x *EnrollmentStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[29]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2281,7 +2925,7 @@ func (x *EnrollmentStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnrollmentStatusResponse.ProtoReflect.Descriptor instead.
 func (*EnrollmentStatusResponse) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{29}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *EnrollmentStatusResponse) GetImplemented() bool {
@@ -2307,7 +2951,7 @@ type RecoveryStatusRequest struct {
 
 func (x *RecoveryStatusRequest) Reset() {
 	*x = RecoveryStatusRequest{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[30]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2319,7 +2963,7 @@ func (x *RecoveryStatusRequest) String() string {
 func (*RecoveryStatusRequest) ProtoMessage() {}
 
 func (x *RecoveryStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[30]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2332,7 +2976,7 @@ func (x *RecoveryStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecoveryStatusRequest.ProtoReflect.Descriptor instead.
 func (*RecoveryStatusRequest) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{30}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *RecoveryStatusRequest) GetAudit() *AuditContext {
@@ -2352,7 +2996,7 @@ type RecoveryStatusResponse struct {
 
 func (x *RecoveryStatusResponse) Reset() {
 	*x = RecoveryStatusResponse{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[31]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2364,7 +3008,7 @@ func (x *RecoveryStatusResponse) String() string {
 func (*RecoveryStatusResponse) ProtoMessage() {}
 
 func (x *RecoveryStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[31]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2377,7 +3021,7 @@ func (x *RecoveryStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RecoveryStatusResponse.ProtoReflect.Descriptor instead.
 func (*RecoveryStatusResponse) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{31}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *RecoveryStatusResponse) GetImplemented() bool {
@@ -2403,7 +3047,7 @@ type AdminStatusRequest struct {
 
 func (x *AdminStatusRequest) Reset() {
 	*x = AdminStatusRequest{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[32]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2415,7 +3059,7 @@ func (x *AdminStatusRequest) String() string {
 func (*AdminStatusRequest) ProtoMessage() {}
 
 func (x *AdminStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[32]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2428,7 +3072,7 @@ func (x *AdminStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdminStatusRequest.ProtoReflect.Descriptor instead.
 func (*AdminStatusRequest) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{32}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *AdminStatusRequest) GetAudit() *AuditContext {
@@ -2448,7 +3092,7 @@ type AdminStatusResponse struct {
 
 func (x *AdminStatusResponse) Reset() {
 	*x = AdminStatusResponse{}
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[33]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2460,7 +3104,7 @@ func (x *AdminStatusResponse) String() string {
 func (*AdminStatusResponse) ProtoMessage() {}
 
 func (x *AdminStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[33]
+	mi := &file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2473,7 +3117,7 @@ func (x *AdminStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdminStatusResponse.ProtoReflect.Descriptor instead.
 func (*AdminStatusResponse) Descriptor() ([]byte, []int) {
-	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{33}
+	return file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *AdminStatusResponse) GetImplemented() bool {
@@ -2590,6 +3234,69 @@ const file_openbao_attestedunseal_v1_attestedunseal_proto_rawDesc = "" +
 	"submissionJ\x04\b\x01\x10\x02\"\xaf\x01\n" +
 	"\x1bNodeEvidencePublishResponse\x12I\n" +
 	"\bevidence\x18\x01 \x01(\v2-.openbao.attestedunseal.v1.NodeEvidenceRecordR\bevidence\x12E\n" +
+	"\bdecision\x18\x02 \x01(\v2).openbao.attestedunseal.v1.PolicyDecisionR\bdecision\"\x82\x01\n" +
+	"\x15NodeEvidencePCRPolicy\x12\x12\n" +
+	"\x04hash\x18\x01 \x01(\tR\x04hash\x12\x12\n" +
+	"\x04pcrs\x18\x02 \x03(\rR\x04pcrs\x12'\n" +
+	"\x0fexpected_digest\x18\x03 \x01(\tR\x0eexpectedDigest\x12\x18\n" +
+	"\aprofile\x18\x04 \x01(\tR\aprofile\"\xde\x01\n" +
+	"\x15NodeEvidenceTPMPolicy\x12\x12\n" +
+	"\x04mode\x18\x01 \x01(\tR\x04mode\x125\n" +
+	"\x17enrolled_ak_public_hash\x18\x02 \x01(\tR\x14enrolledAkPublicHash\x12O\n" +
+	"\n" +
+	"pcr_policy\x18\x03 \x01(\v20.openbao.attestedunseal.v1.NodeEvidencePCRPolicyR\tpcrPolicy\x12)\n" +
+	"\x10provider_profile\x18\x04 \x01(\tR\x0fproviderProfile\"\xdd\x03\n" +
+	"\x1cNodeEvidenceEnrollmentRecord\x12\x1d\n" +
+	"\n" +
+	"cluster_id\x18\x01 \x01(\tR\tclusterId\x12\x1b\n" +
+	"\tnode_name\x18\x02 \x01(\tR\bnodeName\x12\x19\n" +
+	"\bnode_uid\x18\x03 \x01(\tR\anodeUid\x12\x1f\n" +
+	"\vprovider_id\x18\x04 \x01(\tR\n" +
+	"providerId\x12O\n" +
+	"\n" +
+	"tpm_policy\x18\x05 \x01(\v20.openbao.attestedunseal.v1.NodeEvidenceTPMPolicyR\ttpmPolicy\x12@\n" +
+	"\x1cpublisher_certificate_sha256\x18\x06 \x03(\tR\x1apublisherCertificateSha256\x12\x1a\n" +
+	"\brevision\x18\a \x01(\x04R\brevision\x122\n" +
+	"\x15enrolled_unix_seconds\x18\b \x01(\x03R\x13enrolledUnixSeconds\x120\n" +
+	"\x14updated_unix_seconds\x18\t \x01(\x03R\x12updatedUnixSeconds\x120\n" +
+	"\x14revoked_unix_seconds\x18\n" +
+	" \x01(\x03R\x12revokedUnixSeconds\"\x81\x03\n" +
+	"\x1dNodeEvidenceEnrollmentRequest\x12\x1d\n" +
+	"\n" +
+	"cluster_id\x18\x01 \x01(\tR\tclusterId\x12\x1b\n" +
+	"\tnode_name\x18\x02 \x01(\tR\bnodeName\x12\x19\n" +
+	"\bnode_uid\x18\x03 \x01(\tR\anodeUid\x12\x1f\n" +
+	"\vprovider_id\x18\x04 \x01(\tR\n" +
+	"providerId\x12O\n" +
+	"\n" +
+	"tpm_policy\x18\x05 \x01(\v20.openbao.attestedunseal.v1.NodeEvidenceTPMPolicyR\ttpmPolicy\x12@\n" +
+	"\x1cpublisher_certificate_sha256\x18\x06 \x03(\tR\x1apublisherCertificateSha256\x12\x16\n" +
+	"\x06reason\x18\a \x01(\tR\x06reason\x12=\n" +
+	"\x05audit\x18\b \x01(\v2'.openbao.attestedunseal.v1.AuditContextR\x05audit\"\xc0\x01\n" +
+	"\x1eNodeEvidenceEnrollmentResponse\x12W\n" +
+	"\n" +
+	"enrollment\x18\x01 \x01(\v27.openbao.attestedunseal.v1.NodeEvidenceEnrollmentRecordR\n" +
+	"enrollment\x12E\n" +
+	"\bdecision\x18\x02 \x01(\v2).openbao.attestedunseal.v1.PolicyDecisionR\bdecision\"\xb2\x01\n" +
+	"\x1dNodeEvidenceRevocationRequest\x12\x1d\n" +
+	"\n" +
+	"cluster_id\x18\x01 \x01(\tR\tclusterId\x12\x1b\n" +
+	"\tnode_name\x18\x02 \x01(\tR\bnodeName\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\x12=\n" +
+	"\x05audit\x18\x04 \x01(\v2'.openbao.attestedunseal.v1.AuditContextR\x05audit\"\xc0\x01\n" +
+	"\x1eNodeEvidenceRevocationResponse\x12W\n" +
+	"\n" +
+	"enrollment\x18\x01 \x01(\v27.openbao.attestedunseal.v1.NodeEvidenceEnrollmentRecordR\n" +
+	"enrollment\x12E\n" +
+	"\bdecision\x18\x02 \x01(\v2).openbao.attestedunseal.v1.PolicyDecisionR\bdecision\"\xc7\x01\n" +
+	"!NodeEvidenceEnrollmentListRequest\x12\x1d\n" +
+	"\n" +
+	"cluster_id\x18\x01 \x01(\tR\tclusterId\x12\x1b\n" +
+	"\tnode_name\x18\x02 \x01(\tR\bnodeName\x12'\n" +
+	"\x0finclude_revoked\x18\x03 \x01(\bR\x0eincludeRevoked\x12=\n" +
+	"\x05audit\x18\x04 \x01(\v2'.openbao.attestedunseal.v1.AuditContextR\x05audit\"\xc6\x01\n" +
+	"\"NodeEvidenceEnrollmentListResponse\x12Y\n" +
+	"\venrollments\x18\x01 \x03(\v27.openbao.attestedunseal.v1.NodeEvidenceEnrollmentRecordR\venrollments\x12E\n" +
 	"\bdecision\x18\x02 \x01(\v2).openbao.attestedunseal.v1.PolicyDecisionR\bdecision\"\xc5\x01\n" +
 	"\x10WorkloadIdentity\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12'\n" +
@@ -2702,9 +3409,12 @@ const file_openbao_attestedunseal_v1_attestedunseal_proto_rawDesc = "" +
 	"\tChallenge\x12+.openbao.attestedunseal.v1.ChallengeRequest\x1a,.openbao.attestedunseal.v1.ChallengeResponse\x12W\n" +
 	"\x04Wrap\x12&.openbao.attestedunseal.v1.WrapRequest\x1a'.openbao.attestedunseal.v1.WrapResponse\x12]\n" +
 	"\x06Unwrap\x12(.openbao.attestedunseal.v1.UnwrapRequest\x1a).openbao.attestedunseal.v1.UnwrapResponse\x12]\n" +
-	"\x06Status\x12(.openbao.attestedunseal.v1.StatusRequest\x1a).openbao.attestedunseal.v1.StatusResponse2\x86\x01\n" +
+	"\x06Status\x12(.openbao.attestedunseal.v1.StatusRequest\x1a).openbao.attestedunseal.v1.StatusResponse2\xbb\x04\n" +
 	"\x11EnrollmentService\x12q\n" +
-	"\x06Status\x122.openbao.attestedunseal.v1.EnrollmentStatusRequest\x1a3.openbao.attestedunseal.v1.EnrollmentStatusResponse2\x80\x01\n" +
+	"\x06Status\x122.openbao.attestedunseal.v1.EnrollmentStatusRequest\x1a3.openbao.attestedunseal.v1.EnrollmentStatusResponse\x12\x89\x01\n" +
+	"\x12EnrollNodeEvidence\x128.openbao.attestedunseal.v1.NodeEvidenceEnrollmentRequest\x1a9.openbao.attestedunseal.v1.NodeEvidenceEnrollmentResponse\x12\x89\x01\n" +
+	"\x12RevokeNodeEvidence\x128.openbao.attestedunseal.v1.NodeEvidenceRevocationRequest\x1a9.openbao.attestedunseal.v1.NodeEvidenceRevocationResponse\x12\x9a\x01\n" +
+	"\x1bListNodeEvidenceEnrollments\x12<.openbao.attestedunseal.v1.NodeEvidenceEnrollmentListRequest\x1a=.openbao.attestedunseal.v1.NodeEvidenceEnrollmentListResponse2\x80\x01\n" +
 	"\x0fRecoveryService\x12m\n" +
 	"\x06Status\x120.openbao.attestedunseal.v1.RecoveryStatusRequest\x1a1.openbao.attestedunseal.v1.RecoveryStatusResponse2\xfc\x04\n" +
 	"\fAdminService\x12g\n" +
@@ -2727,48 +3437,57 @@ func file_openbao_attestedunseal_v1_attestedunseal_proto_rawDescGZIP() []byte {
 }
 
 var file_openbao_attestedunseal_v1_attestedunseal_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
-var file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
+var file_openbao_attestedunseal_v1_attestedunseal_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
 var file_openbao_attestedunseal_v1_attestedunseal_proto_goTypes = []any{
-	(Operation)(0),                        // 0: openbao.attestedunseal.v1.Operation
-	(AttestationProvider)(0),              // 1: openbao.attestedunseal.v1.AttestationProvider
-	(PolicyDecisionState)(0),              // 2: openbao.attestedunseal.v1.PolicyDecisionState
-	(KeyStatus)(0),                        // 3: openbao.attestedunseal.v1.KeyStatus
-	(NodeEvidenceStatus)(0),               // 4: openbao.attestedunseal.v1.NodeEvidenceStatus
-	(ErrorCode)(0),                        // 5: openbao.attestedunseal.v1.ErrorCode
-	(*AuditContext)(nil),                  // 6: openbao.attestedunseal.v1.AuditContext
-	(*KeyRef)(nil),                        // 7: openbao.attestedunseal.v1.KeyRef
-	(*KeyVersion)(nil),                    // 8: openbao.attestedunseal.v1.KeyVersion
-	(*BrokerError)(nil),                   // 9: openbao.attestedunseal.v1.BrokerError
-	(*ChallengeRequest)(nil),              // 10: openbao.attestedunseal.v1.ChallengeRequest
-	(*ChallengeResponse)(nil),             // 11: openbao.attestedunseal.v1.ChallengeResponse
-	(*Claim)(nil),                         // 12: openbao.attestedunseal.v1.Claim
-	(*ClaimsEnvelope)(nil),                // 13: openbao.attestedunseal.v1.ClaimsEnvelope
-	(*EvidenceEnvelope)(nil),              // 14: openbao.attestedunseal.v1.EvidenceEnvelope
-	(*NodeEvidenceRecord)(nil),            // 15: openbao.attestedunseal.v1.NodeEvidenceRecord
-	(*NodeEvidenceListRequest)(nil),       // 16: openbao.attestedunseal.v1.NodeEvidenceListRequest
-	(*NodeEvidenceListResponse)(nil),      // 17: openbao.attestedunseal.v1.NodeEvidenceListResponse
-	(*NodeEvidenceChallengeRequest)(nil),  // 18: openbao.attestedunseal.v1.NodeEvidenceChallengeRequest
-	(*NodeEvidenceChallengeResponse)(nil), // 19: openbao.attestedunseal.v1.NodeEvidenceChallengeResponse
-	(*NodeEvidenceSubmission)(nil),        // 20: openbao.attestedunseal.v1.NodeEvidenceSubmission
-	(*NodeEvidencePublishRequest)(nil),    // 21: openbao.attestedunseal.v1.NodeEvidencePublishRequest
-	(*NodeEvidencePublishResponse)(nil),   // 22: openbao.attestedunseal.v1.NodeEvidencePublishResponse
-	(*WorkloadIdentity)(nil),              // 23: openbao.attestedunseal.v1.WorkloadIdentity
-	(*EvidenceCheckRequest)(nil),          // 24: openbao.attestedunseal.v1.EvidenceCheckRequest
-	(*EvidenceCheckResponse)(nil),         // 25: openbao.attestedunseal.v1.EvidenceCheckResponse
-	(*PolicyDecision)(nil),                // 26: openbao.attestedunseal.v1.PolicyDecision
-	(*WrappedBlob)(nil),                   // 27: openbao.attestedunseal.v1.WrappedBlob
-	(*WrapRequest)(nil),                   // 28: openbao.attestedunseal.v1.WrapRequest
-	(*WrapResponse)(nil),                  // 29: openbao.attestedunseal.v1.WrapResponse
-	(*UnwrapRequest)(nil),                 // 30: openbao.attestedunseal.v1.UnwrapRequest
-	(*UnwrapResponse)(nil),                // 31: openbao.attestedunseal.v1.UnwrapResponse
-	(*StatusRequest)(nil),                 // 32: openbao.attestedunseal.v1.StatusRequest
-	(*StatusResponse)(nil),                // 33: openbao.attestedunseal.v1.StatusResponse
-	(*EnrollmentStatusRequest)(nil),       // 34: openbao.attestedunseal.v1.EnrollmentStatusRequest
-	(*EnrollmentStatusResponse)(nil),      // 35: openbao.attestedunseal.v1.EnrollmentStatusResponse
-	(*RecoveryStatusRequest)(nil),         // 36: openbao.attestedunseal.v1.RecoveryStatusRequest
-	(*RecoveryStatusResponse)(nil),        // 37: openbao.attestedunseal.v1.RecoveryStatusResponse
-	(*AdminStatusRequest)(nil),            // 38: openbao.attestedunseal.v1.AdminStatusRequest
-	(*AdminStatusResponse)(nil),           // 39: openbao.attestedunseal.v1.AdminStatusResponse
+	(Operation)(0),                             // 0: openbao.attestedunseal.v1.Operation
+	(AttestationProvider)(0),                   // 1: openbao.attestedunseal.v1.AttestationProvider
+	(PolicyDecisionState)(0),                   // 2: openbao.attestedunseal.v1.PolicyDecisionState
+	(KeyStatus)(0),                             // 3: openbao.attestedunseal.v1.KeyStatus
+	(NodeEvidenceStatus)(0),                    // 4: openbao.attestedunseal.v1.NodeEvidenceStatus
+	(ErrorCode)(0),                             // 5: openbao.attestedunseal.v1.ErrorCode
+	(*AuditContext)(nil),                       // 6: openbao.attestedunseal.v1.AuditContext
+	(*KeyRef)(nil),                             // 7: openbao.attestedunseal.v1.KeyRef
+	(*KeyVersion)(nil),                         // 8: openbao.attestedunseal.v1.KeyVersion
+	(*BrokerError)(nil),                        // 9: openbao.attestedunseal.v1.BrokerError
+	(*ChallengeRequest)(nil),                   // 10: openbao.attestedunseal.v1.ChallengeRequest
+	(*ChallengeResponse)(nil),                  // 11: openbao.attestedunseal.v1.ChallengeResponse
+	(*Claim)(nil),                              // 12: openbao.attestedunseal.v1.Claim
+	(*ClaimsEnvelope)(nil),                     // 13: openbao.attestedunseal.v1.ClaimsEnvelope
+	(*EvidenceEnvelope)(nil),                   // 14: openbao.attestedunseal.v1.EvidenceEnvelope
+	(*NodeEvidenceRecord)(nil),                 // 15: openbao.attestedunseal.v1.NodeEvidenceRecord
+	(*NodeEvidenceListRequest)(nil),            // 16: openbao.attestedunseal.v1.NodeEvidenceListRequest
+	(*NodeEvidenceListResponse)(nil),           // 17: openbao.attestedunseal.v1.NodeEvidenceListResponse
+	(*NodeEvidenceChallengeRequest)(nil),       // 18: openbao.attestedunseal.v1.NodeEvidenceChallengeRequest
+	(*NodeEvidenceChallengeResponse)(nil),      // 19: openbao.attestedunseal.v1.NodeEvidenceChallengeResponse
+	(*NodeEvidenceSubmission)(nil),             // 20: openbao.attestedunseal.v1.NodeEvidenceSubmission
+	(*NodeEvidencePublishRequest)(nil),         // 21: openbao.attestedunseal.v1.NodeEvidencePublishRequest
+	(*NodeEvidencePublishResponse)(nil),        // 22: openbao.attestedunseal.v1.NodeEvidencePublishResponse
+	(*NodeEvidencePCRPolicy)(nil),              // 23: openbao.attestedunseal.v1.NodeEvidencePCRPolicy
+	(*NodeEvidenceTPMPolicy)(nil),              // 24: openbao.attestedunseal.v1.NodeEvidenceTPMPolicy
+	(*NodeEvidenceEnrollmentRecord)(nil),       // 25: openbao.attestedunseal.v1.NodeEvidenceEnrollmentRecord
+	(*NodeEvidenceEnrollmentRequest)(nil),      // 26: openbao.attestedunseal.v1.NodeEvidenceEnrollmentRequest
+	(*NodeEvidenceEnrollmentResponse)(nil),     // 27: openbao.attestedunseal.v1.NodeEvidenceEnrollmentResponse
+	(*NodeEvidenceRevocationRequest)(nil),      // 28: openbao.attestedunseal.v1.NodeEvidenceRevocationRequest
+	(*NodeEvidenceRevocationResponse)(nil),     // 29: openbao.attestedunseal.v1.NodeEvidenceRevocationResponse
+	(*NodeEvidenceEnrollmentListRequest)(nil),  // 30: openbao.attestedunseal.v1.NodeEvidenceEnrollmentListRequest
+	(*NodeEvidenceEnrollmentListResponse)(nil), // 31: openbao.attestedunseal.v1.NodeEvidenceEnrollmentListResponse
+	(*WorkloadIdentity)(nil),                   // 32: openbao.attestedunseal.v1.WorkloadIdentity
+	(*EvidenceCheckRequest)(nil),               // 33: openbao.attestedunseal.v1.EvidenceCheckRequest
+	(*EvidenceCheckResponse)(nil),              // 34: openbao.attestedunseal.v1.EvidenceCheckResponse
+	(*PolicyDecision)(nil),                     // 35: openbao.attestedunseal.v1.PolicyDecision
+	(*WrappedBlob)(nil),                        // 36: openbao.attestedunseal.v1.WrappedBlob
+	(*WrapRequest)(nil),                        // 37: openbao.attestedunseal.v1.WrapRequest
+	(*WrapResponse)(nil),                       // 38: openbao.attestedunseal.v1.WrapResponse
+	(*UnwrapRequest)(nil),                      // 39: openbao.attestedunseal.v1.UnwrapRequest
+	(*UnwrapResponse)(nil),                     // 40: openbao.attestedunseal.v1.UnwrapResponse
+	(*StatusRequest)(nil),                      // 41: openbao.attestedunseal.v1.StatusRequest
+	(*StatusResponse)(nil),                     // 42: openbao.attestedunseal.v1.StatusResponse
+	(*EnrollmentStatusRequest)(nil),            // 43: openbao.attestedunseal.v1.EnrollmentStatusRequest
+	(*EnrollmentStatusResponse)(nil),           // 44: openbao.attestedunseal.v1.EnrollmentStatusResponse
+	(*RecoveryStatusRequest)(nil),              // 45: openbao.attestedunseal.v1.RecoveryStatusRequest
+	(*RecoveryStatusResponse)(nil),             // 46: openbao.attestedunseal.v1.RecoveryStatusResponse
+	(*AdminStatusRequest)(nil),                 // 47: openbao.attestedunseal.v1.AdminStatusRequest
+	(*AdminStatusResponse)(nil),                // 48: openbao.attestedunseal.v1.AdminStatusResponse
 }
 var file_openbao_attestedunseal_v1_attestedunseal_proto_depIdxs = []int32{
 	7,  // 0: openbao.attestedunseal.v1.KeyVersion.ref:type_name -> openbao.attestedunseal.v1.KeyRef
@@ -2785,64 +3504,82 @@ var file_openbao_attestedunseal_v1_attestedunseal_proto_depIdxs = []int32{
 	9,  // 11: openbao.attestedunseal.v1.NodeEvidenceRecord.errors:type_name -> openbao.attestedunseal.v1.BrokerError
 	6,  // 12: openbao.attestedunseal.v1.NodeEvidenceListRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
 	15, // 13: openbao.attestedunseal.v1.NodeEvidenceListResponse.evidence:type_name -> openbao.attestedunseal.v1.NodeEvidenceRecord
-	26, // 14: openbao.attestedunseal.v1.NodeEvidenceListResponse.decision:type_name -> openbao.attestedunseal.v1.PolicyDecision
+	35, // 14: openbao.attestedunseal.v1.NodeEvidenceListResponse.decision:type_name -> openbao.attestedunseal.v1.PolicyDecision
 	6,  // 15: openbao.attestedunseal.v1.NodeEvidenceChallengeRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
-	26, // 16: openbao.attestedunseal.v1.NodeEvidenceChallengeResponse.decision:type_name -> openbao.attestedunseal.v1.PolicyDecision
+	35, // 16: openbao.attestedunseal.v1.NodeEvidenceChallengeResponse.decision:type_name -> openbao.attestedunseal.v1.PolicyDecision
 	6,  // 17: openbao.attestedunseal.v1.NodeEvidencePublishRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
 	20, // 18: openbao.attestedunseal.v1.NodeEvidencePublishRequest.submission:type_name -> openbao.attestedunseal.v1.NodeEvidenceSubmission
 	15, // 19: openbao.attestedunseal.v1.NodeEvidencePublishResponse.evidence:type_name -> openbao.attestedunseal.v1.NodeEvidenceRecord
-	26, // 20: openbao.attestedunseal.v1.NodeEvidencePublishResponse.decision:type_name -> openbao.attestedunseal.v1.PolicyDecision
-	0,  // 21: openbao.attestedunseal.v1.EvidenceCheckRequest.operation:type_name -> openbao.attestedunseal.v1.Operation
-	14, // 22: openbao.attestedunseal.v1.EvidenceCheckRequest.evidence:type_name -> openbao.attestedunseal.v1.EvidenceEnvelope
-	6,  // 23: openbao.attestedunseal.v1.EvidenceCheckRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
-	26, // 24: openbao.attestedunseal.v1.EvidenceCheckResponse.decision:type_name -> openbao.attestedunseal.v1.PolicyDecision
-	23, // 25: openbao.attestedunseal.v1.EvidenceCheckResponse.workload:type_name -> openbao.attestedunseal.v1.WorkloadIdentity
-	15, // 26: openbao.attestedunseal.v1.EvidenceCheckResponse.node_evidence:type_name -> openbao.attestedunseal.v1.NodeEvidenceRecord
-	2,  // 27: openbao.attestedunseal.v1.PolicyDecision.state:type_name -> openbao.attestedunseal.v1.PolicyDecisionState
-	9,  // 28: openbao.attestedunseal.v1.PolicyDecision.errors:type_name -> openbao.attestedunseal.v1.BrokerError
-	7,  // 29: openbao.attestedunseal.v1.WrappedBlob.key:type_name -> openbao.attestedunseal.v1.KeyRef
-	7,  // 30: openbao.attestedunseal.v1.WrapRequest.requested_key:type_name -> openbao.attestedunseal.v1.KeyRef
-	14, // 31: openbao.attestedunseal.v1.WrapRequest.evidence:type_name -> openbao.attestedunseal.v1.EvidenceEnvelope
-	6,  // 32: openbao.attestedunseal.v1.WrapRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
-	27, // 33: openbao.attestedunseal.v1.WrapResponse.blob:type_name -> openbao.attestedunseal.v1.WrappedBlob
-	26, // 34: openbao.attestedunseal.v1.WrapResponse.decision:type_name -> openbao.attestedunseal.v1.PolicyDecision
-	27, // 35: openbao.attestedunseal.v1.UnwrapRequest.blob:type_name -> openbao.attestedunseal.v1.WrappedBlob
-	14, // 36: openbao.attestedunseal.v1.UnwrapRequest.evidence:type_name -> openbao.attestedunseal.v1.EvidenceEnvelope
-	6,  // 37: openbao.attestedunseal.v1.UnwrapRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
-	26, // 38: openbao.attestedunseal.v1.UnwrapResponse.decision:type_name -> openbao.attestedunseal.v1.PolicyDecision
-	6,  // 39: openbao.attestedunseal.v1.StatusRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
-	8,  // 40: openbao.attestedunseal.v1.StatusResponse.keys:type_name -> openbao.attestedunseal.v1.KeyVersion
-	9,  // 41: openbao.attestedunseal.v1.StatusResponse.errors:type_name -> openbao.attestedunseal.v1.BrokerError
-	6,  // 42: openbao.attestedunseal.v1.EnrollmentStatusRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
-	6,  // 43: openbao.attestedunseal.v1.RecoveryStatusRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
-	6,  // 44: openbao.attestedunseal.v1.AdminStatusRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
-	10, // 45: openbao.attestedunseal.v1.UnsealService.Challenge:input_type -> openbao.attestedunseal.v1.ChallengeRequest
-	28, // 46: openbao.attestedunseal.v1.UnsealService.Wrap:input_type -> openbao.attestedunseal.v1.WrapRequest
-	30, // 47: openbao.attestedunseal.v1.UnsealService.Unwrap:input_type -> openbao.attestedunseal.v1.UnwrapRequest
-	32, // 48: openbao.attestedunseal.v1.UnsealService.Status:input_type -> openbao.attestedunseal.v1.StatusRequest
-	34, // 49: openbao.attestedunseal.v1.EnrollmentService.Status:input_type -> openbao.attestedunseal.v1.EnrollmentStatusRequest
-	36, // 50: openbao.attestedunseal.v1.RecoveryService.Status:input_type -> openbao.attestedunseal.v1.RecoveryStatusRequest
-	38, // 51: openbao.attestedunseal.v1.AdminService.Status:input_type -> openbao.attestedunseal.v1.AdminStatusRequest
-	18, // 52: openbao.attestedunseal.v1.AdminService.ChallengeNodeEvidence:input_type -> openbao.attestedunseal.v1.NodeEvidenceChallengeRequest
-	21, // 53: openbao.attestedunseal.v1.AdminService.PublishNodeEvidence:input_type -> openbao.attestedunseal.v1.NodeEvidencePublishRequest
-	16, // 54: openbao.attestedunseal.v1.AdminService.ListNodeEvidence:input_type -> openbao.attestedunseal.v1.NodeEvidenceListRequest
-	24, // 55: openbao.attestedunseal.v1.AdminService.CheckEvidence:input_type -> openbao.attestedunseal.v1.EvidenceCheckRequest
-	11, // 56: openbao.attestedunseal.v1.UnsealService.Challenge:output_type -> openbao.attestedunseal.v1.ChallengeResponse
-	29, // 57: openbao.attestedunseal.v1.UnsealService.Wrap:output_type -> openbao.attestedunseal.v1.WrapResponse
-	31, // 58: openbao.attestedunseal.v1.UnsealService.Unwrap:output_type -> openbao.attestedunseal.v1.UnwrapResponse
-	33, // 59: openbao.attestedunseal.v1.UnsealService.Status:output_type -> openbao.attestedunseal.v1.StatusResponse
-	35, // 60: openbao.attestedunseal.v1.EnrollmentService.Status:output_type -> openbao.attestedunseal.v1.EnrollmentStatusResponse
-	37, // 61: openbao.attestedunseal.v1.RecoveryService.Status:output_type -> openbao.attestedunseal.v1.RecoveryStatusResponse
-	39, // 62: openbao.attestedunseal.v1.AdminService.Status:output_type -> openbao.attestedunseal.v1.AdminStatusResponse
-	19, // 63: openbao.attestedunseal.v1.AdminService.ChallengeNodeEvidence:output_type -> openbao.attestedunseal.v1.NodeEvidenceChallengeResponse
-	22, // 64: openbao.attestedunseal.v1.AdminService.PublishNodeEvidence:output_type -> openbao.attestedunseal.v1.NodeEvidencePublishResponse
-	17, // 65: openbao.attestedunseal.v1.AdminService.ListNodeEvidence:output_type -> openbao.attestedunseal.v1.NodeEvidenceListResponse
-	25, // 66: openbao.attestedunseal.v1.AdminService.CheckEvidence:output_type -> openbao.attestedunseal.v1.EvidenceCheckResponse
-	56, // [56:67] is the sub-list for method output_type
-	45, // [45:56] is the sub-list for method input_type
-	45, // [45:45] is the sub-list for extension type_name
-	45, // [45:45] is the sub-list for extension extendee
-	0,  // [0:45] is the sub-list for field type_name
+	35, // 20: openbao.attestedunseal.v1.NodeEvidencePublishResponse.decision:type_name -> openbao.attestedunseal.v1.PolicyDecision
+	23, // 21: openbao.attestedunseal.v1.NodeEvidenceTPMPolicy.pcr_policy:type_name -> openbao.attestedunseal.v1.NodeEvidencePCRPolicy
+	24, // 22: openbao.attestedunseal.v1.NodeEvidenceEnrollmentRecord.tpm_policy:type_name -> openbao.attestedunseal.v1.NodeEvidenceTPMPolicy
+	24, // 23: openbao.attestedunseal.v1.NodeEvidenceEnrollmentRequest.tpm_policy:type_name -> openbao.attestedunseal.v1.NodeEvidenceTPMPolicy
+	6,  // 24: openbao.attestedunseal.v1.NodeEvidenceEnrollmentRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
+	25, // 25: openbao.attestedunseal.v1.NodeEvidenceEnrollmentResponse.enrollment:type_name -> openbao.attestedunseal.v1.NodeEvidenceEnrollmentRecord
+	35, // 26: openbao.attestedunseal.v1.NodeEvidenceEnrollmentResponse.decision:type_name -> openbao.attestedunseal.v1.PolicyDecision
+	6,  // 27: openbao.attestedunseal.v1.NodeEvidenceRevocationRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
+	25, // 28: openbao.attestedunseal.v1.NodeEvidenceRevocationResponse.enrollment:type_name -> openbao.attestedunseal.v1.NodeEvidenceEnrollmentRecord
+	35, // 29: openbao.attestedunseal.v1.NodeEvidenceRevocationResponse.decision:type_name -> openbao.attestedunseal.v1.PolicyDecision
+	6,  // 30: openbao.attestedunseal.v1.NodeEvidenceEnrollmentListRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
+	25, // 31: openbao.attestedunseal.v1.NodeEvidenceEnrollmentListResponse.enrollments:type_name -> openbao.attestedunseal.v1.NodeEvidenceEnrollmentRecord
+	35, // 32: openbao.attestedunseal.v1.NodeEvidenceEnrollmentListResponse.decision:type_name -> openbao.attestedunseal.v1.PolicyDecision
+	0,  // 33: openbao.attestedunseal.v1.EvidenceCheckRequest.operation:type_name -> openbao.attestedunseal.v1.Operation
+	14, // 34: openbao.attestedunseal.v1.EvidenceCheckRequest.evidence:type_name -> openbao.attestedunseal.v1.EvidenceEnvelope
+	6,  // 35: openbao.attestedunseal.v1.EvidenceCheckRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
+	35, // 36: openbao.attestedunseal.v1.EvidenceCheckResponse.decision:type_name -> openbao.attestedunseal.v1.PolicyDecision
+	32, // 37: openbao.attestedunseal.v1.EvidenceCheckResponse.workload:type_name -> openbao.attestedunseal.v1.WorkloadIdentity
+	15, // 38: openbao.attestedunseal.v1.EvidenceCheckResponse.node_evidence:type_name -> openbao.attestedunseal.v1.NodeEvidenceRecord
+	2,  // 39: openbao.attestedunseal.v1.PolicyDecision.state:type_name -> openbao.attestedunseal.v1.PolicyDecisionState
+	9,  // 40: openbao.attestedunseal.v1.PolicyDecision.errors:type_name -> openbao.attestedunseal.v1.BrokerError
+	7,  // 41: openbao.attestedunseal.v1.WrappedBlob.key:type_name -> openbao.attestedunseal.v1.KeyRef
+	7,  // 42: openbao.attestedunseal.v1.WrapRequest.requested_key:type_name -> openbao.attestedunseal.v1.KeyRef
+	14, // 43: openbao.attestedunseal.v1.WrapRequest.evidence:type_name -> openbao.attestedunseal.v1.EvidenceEnvelope
+	6,  // 44: openbao.attestedunseal.v1.WrapRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
+	36, // 45: openbao.attestedunseal.v1.WrapResponse.blob:type_name -> openbao.attestedunseal.v1.WrappedBlob
+	35, // 46: openbao.attestedunseal.v1.WrapResponse.decision:type_name -> openbao.attestedunseal.v1.PolicyDecision
+	36, // 47: openbao.attestedunseal.v1.UnwrapRequest.blob:type_name -> openbao.attestedunseal.v1.WrappedBlob
+	14, // 48: openbao.attestedunseal.v1.UnwrapRequest.evidence:type_name -> openbao.attestedunseal.v1.EvidenceEnvelope
+	6,  // 49: openbao.attestedunseal.v1.UnwrapRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
+	35, // 50: openbao.attestedunseal.v1.UnwrapResponse.decision:type_name -> openbao.attestedunseal.v1.PolicyDecision
+	6,  // 51: openbao.attestedunseal.v1.StatusRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
+	8,  // 52: openbao.attestedunseal.v1.StatusResponse.keys:type_name -> openbao.attestedunseal.v1.KeyVersion
+	9,  // 53: openbao.attestedunseal.v1.StatusResponse.errors:type_name -> openbao.attestedunseal.v1.BrokerError
+	6,  // 54: openbao.attestedunseal.v1.EnrollmentStatusRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
+	6,  // 55: openbao.attestedunseal.v1.RecoveryStatusRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
+	6,  // 56: openbao.attestedunseal.v1.AdminStatusRequest.audit:type_name -> openbao.attestedunseal.v1.AuditContext
+	10, // 57: openbao.attestedunseal.v1.UnsealService.Challenge:input_type -> openbao.attestedunseal.v1.ChallengeRequest
+	37, // 58: openbao.attestedunseal.v1.UnsealService.Wrap:input_type -> openbao.attestedunseal.v1.WrapRequest
+	39, // 59: openbao.attestedunseal.v1.UnsealService.Unwrap:input_type -> openbao.attestedunseal.v1.UnwrapRequest
+	41, // 60: openbao.attestedunseal.v1.UnsealService.Status:input_type -> openbao.attestedunseal.v1.StatusRequest
+	43, // 61: openbao.attestedunseal.v1.EnrollmentService.Status:input_type -> openbao.attestedunseal.v1.EnrollmentStatusRequest
+	26, // 62: openbao.attestedunseal.v1.EnrollmentService.EnrollNodeEvidence:input_type -> openbao.attestedunseal.v1.NodeEvidenceEnrollmentRequest
+	28, // 63: openbao.attestedunseal.v1.EnrollmentService.RevokeNodeEvidence:input_type -> openbao.attestedunseal.v1.NodeEvidenceRevocationRequest
+	30, // 64: openbao.attestedunseal.v1.EnrollmentService.ListNodeEvidenceEnrollments:input_type -> openbao.attestedunseal.v1.NodeEvidenceEnrollmentListRequest
+	45, // 65: openbao.attestedunseal.v1.RecoveryService.Status:input_type -> openbao.attestedunseal.v1.RecoveryStatusRequest
+	47, // 66: openbao.attestedunseal.v1.AdminService.Status:input_type -> openbao.attestedunseal.v1.AdminStatusRequest
+	18, // 67: openbao.attestedunseal.v1.AdminService.ChallengeNodeEvidence:input_type -> openbao.attestedunseal.v1.NodeEvidenceChallengeRequest
+	21, // 68: openbao.attestedunseal.v1.AdminService.PublishNodeEvidence:input_type -> openbao.attestedunseal.v1.NodeEvidencePublishRequest
+	16, // 69: openbao.attestedunseal.v1.AdminService.ListNodeEvidence:input_type -> openbao.attestedunseal.v1.NodeEvidenceListRequest
+	33, // 70: openbao.attestedunseal.v1.AdminService.CheckEvidence:input_type -> openbao.attestedunseal.v1.EvidenceCheckRequest
+	11, // 71: openbao.attestedunseal.v1.UnsealService.Challenge:output_type -> openbao.attestedunseal.v1.ChallengeResponse
+	38, // 72: openbao.attestedunseal.v1.UnsealService.Wrap:output_type -> openbao.attestedunseal.v1.WrapResponse
+	40, // 73: openbao.attestedunseal.v1.UnsealService.Unwrap:output_type -> openbao.attestedunseal.v1.UnwrapResponse
+	42, // 74: openbao.attestedunseal.v1.UnsealService.Status:output_type -> openbao.attestedunseal.v1.StatusResponse
+	44, // 75: openbao.attestedunseal.v1.EnrollmentService.Status:output_type -> openbao.attestedunseal.v1.EnrollmentStatusResponse
+	27, // 76: openbao.attestedunseal.v1.EnrollmentService.EnrollNodeEvidence:output_type -> openbao.attestedunseal.v1.NodeEvidenceEnrollmentResponse
+	29, // 77: openbao.attestedunseal.v1.EnrollmentService.RevokeNodeEvidence:output_type -> openbao.attestedunseal.v1.NodeEvidenceRevocationResponse
+	31, // 78: openbao.attestedunseal.v1.EnrollmentService.ListNodeEvidenceEnrollments:output_type -> openbao.attestedunseal.v1.NodeEvidenceEnrollmentListResponse
+	46, // 79: openbao.attestedunseal.v1.RecoveryService.Status:output_type -> openbao.attestedunseal.v1.RecoveryStatusResponse
+	48, // 80: openbao.attestedunseal.v1.AdminService.Status:output_type -> openbao.attestedunseal.v1.AdminStatusResponse
+	19, // 81: openbao.attestedunseal.v1.AdminService.ChallengeNodeEvidence:output_type -> openbao.attestedunseal.v1.NodeEvidenceChallengeResponse
+	22, // 82: openbao.attestedunseal.v1.AdminService.PublishNodeEvidence:output_type -> openbao.attestedunseal.v1.NodeEvidencePublishResponse
+	17, // 83: openbao.attestedunseal.v1.AdminService.ListNodeEvidence:output_type -> openbao.attestedunseal.v1.NodeEvidenceListResponse
+	34, // 84: openbao.attestedunseal.v1.AdminService.CheckEvidence:output_type -> openbao.attestedunseal.v1.EvidenceCheckResponse
+	71, // [71:85] is the sub-list for method output_type
+	57, // [57:71] is the sub-list for method input_type
+	57, // [57:57] is the sub-list for extension type_name
+	57, // [57:57] is the sub-list for extension extendee
+	0,  // [0:57] is the sub-list for field type_name
 }
 
 func init() { file_openbao_attestedunseal_v1_attestedunseal_proto_init() }
@@ -2856,7 +3593,7 @@ func file_openbao_attestedunseal_v1_attestedunseal_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_openbao_attestedunseal_v1_attestedunseal_proto_rawDesc), len(file_openbao_attestedunseal_v1_attestedunseal_proto_rawDesc)),
 			NumEnums:      6,
-			NumMessages:   34,
+			NumMessages:   43,
 			NumExtensions: 0,
 			NumServices:   4,
 		},

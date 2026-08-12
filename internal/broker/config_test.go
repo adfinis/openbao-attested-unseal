@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/adfinis/openbao-attested-unseal/internal/nodeevidence"
-	tpmlocal "github.com/adfinis/openbao-attested-unseal/internal/tpm"
 )
 
 func TestConfigValidateAcceptsDefaultDisabledKubernetes(t *testing.T) {
@@ -139,21 +138,15 @@ func TestConfigValidateRejectsUnknownNodeEvidenceProvider(t *testing.T) {
 	}
 }
 
-func TestConfigValidateAcceptsEnrolledTPMNodePolicy(t *testing.T) {
+func TestConfigValidateAcceptsTPMProviderWithNodeEvidenceAdmin(t *testing.T) {
 	config := validBrokerConfig()
 	configureMutualTLS(&config)
 	config.Kubernetes.NodeEvidencePublishProviders = []string{nodeevidence.ProviderTPM2Quote}
-	config.Kubernetes.NodeEvidenceTPMPolicies = map[string]TPMNodeEvidencePolicy{
-		"node-a": {
-			NodeUID: "node-uid-a",
-			Policy: tpmlocal.Policy{
-				Mode:                 tpmlocal.PolicyModeTPMOnly,
-				EnrolledAKPublicHash: "sha256:" + strings.Repeat("ab", 32),
-			},
+	config.ControlPlane.Identities = map[string]ControlPlaneIdentity{
+		"sha256:" + strings.Repeat("cd", 32): {
+			Roles:      []string{ControlPlaneRoleNodeEvidenceAdmin},
+			ClusterIDs: []string{config.ClusterID},
 		},
-	}
-	config.Kubernetes.NodeEvidencePublishers = map[string]NodeEvidencePublisher{
-		"sha256:" + strings.Repeat("cd", 32): {NodeNames: []string{"node-a"}},
 	}
 
 	if err := config.Validate(); err != nil {
@@ -161,45 +154,24 @@ func TestConfigValidateAcceptsEnrolledTPMNodePolicy(t *testing.T) {
 	}
 }
 
-func TestConfigValidateRejectsTPMProviderWithoutPolicies(t *testing.T) {
+func TestConfigValidateRejectsTPMProviderWithoutNodeEvidenceAdmin(t *testing.T) {
 	config := validBrokerConfig()
+	configureMutualTLS(&config)
 	config.Kubernetes.NodeEvidencePublishProviders = []string{nodeevidence.ProviderTPM2Quote}
 
 	err := config.Validate()
-	if err == nil || !strings.Contains(err.Error(), "node_evidence_tpm_policies") {
-		t.Fatalf("Validate error = %v, want node_evidence_tpm_policies error", err)
+	if err == nil || !strings.Contains(err.Error(), "node-evidence-admin") {
+		t.Fatalf("Validate error = %v, want node-evidence-admin error", err)
 	}
 }
 
-func TestConfigValidateRejectsUnboundTPMNodePolicy(t *testing.T) {
+func TestConfigValidateRejectsControlPlaneIdentityWithoutMutualTLS(t *testing.T) {
 	config := validBrokerConfig()
-	config.Kubernetes.NodeEvidencePublishProviders = []string{nodeevidence.ProviderTPM2Quote}
-	config.Kubernetes.NodeEvidenceTPMPolicies = map[string]TPMNodeEvidencePolicy{
-		"node-a": {
-			Policy: tpmlocal.Policy{Mode: tpmlocal.PolicyModeTPMOnly},
+	config.ControlPlane.Identities = map[string]ControlPlaneIdentity{
+		"sha256:" + strings.Repeat("cd", 32): {
+			Roles:      []string{ControlPlaneRoleNodeEvidenceAdmin},
+			ClusterIDs: []string{config.ClusterID},
 		},
-	}
-
-	err := config.Validate()
-	if err == nil || !strings.Contains(err.Error(), "node_uid") {
-		t.Fatalf("Validate error = %v, want node_uid error", err)
-	}
-}
-
-func TestConfigValidateRejectsTPMPublisherWithoutMutualTLS(t *testing.T) {
-	config := validBrokerConfig()
-	config.Kubernetes.NodeEvidencePublishProviders = []string{nodeevidence.ProviderTPM2Quote}
-	config.Kubernetes.NodeEvidenceTPMPolicies = map[string]TPMNodeEvidencePolicy{
-		"node-a": {
-			NodeUID: "node-uid-a",
-			Policy: tpmlocal.Policy{
-				Mode:                 tpmlocal.PolicyModeTPMOnly,
-				EnrolledAKPublicHash: "sha256:" + strings.Repeat("ab", 32),
-			},
-		},
-	}
-	config.Kubernetes.NodeEvidencePublishers = map[string]NodeEvidencePublisher{
-		"sha256:" + strings.Repeat("cd", 32): {NodeNames: []string{"node-a"}},
 	}
 
 	err := config.Validate()
@@ -208,26 +180,47 @@ func TestConfigValidateRejectsTPMPublisherWithoutMutualTLS(t *testing.T) {
 	}
 }
 
-func TestConfigValidateRejectsUnscopedTPMPublisher(t *testing.T) {
+func TestConfigValidateRejectsNonCanonicalControlPlaneIdentity(t *testing.T) {
 	config := validBrokerConfig()
 	configureMutualTLS(&config)
-	config.Kubernetes.NodeEvidencePublishProviders = []string{nodeevidence.ProviderTPM2Quote}
-	config.Kubernetes.NodeEvidenceTPMPolicies = map[string]TPMNodeEvidencePolicy{
-		"node-a": {
-			NodeUID: "node-uid-a",
-			Policy: tpmlocal.Policy{
-				Mode:                 tpmlocal.PolicyModeTPMOnly,
-				EnrolledAKPublicHash: "sha256:" + strings.Repeat("ab", 32),
-			},
+	config.ControlPlane.Identities = map[string]ControlPlaneIdentity{
+		"sha256:" + strings.Repeat("CD", 32): {
+			Roles:      []string{ControlPlaneRoleNodeEvidenceAdmin},
+			ClusterIDs: []string{config.ClusterID},
 		},
-	}
-	config.Kubernetes.NodeEvidencePublishers = map[string]NodeEvidencePublisher{
-		"sha256:" + strings.Repeat("cd", 32): {NodeNames: []string{"node-b"}},
 	}
 
 	err := config.Validate()
-	if err == nil || !strings.Contains(err.Error(), "unenrolled node") {
-		t.Fatalf("Validate error = %v, want unenrolled node error", err)
+	if err == nil || !strings.Contains(err.Error(), "non-canonical certificate") {
+		t.Fatalf("Validate error = %v, want canonical certificate error", err)
+	}
+}
+
+func TestConfigValidateRejectsUnsupportedControlPlaneRole(t *testing.T) {
+	config := validBrokerConfig()
+	configureMutualTLS(&config)
+	config.ControlPlane.Identities = map[string]ControlPlaneIdentity{
+		"sha256:" + strings.Repeat("cd", 32): {
+			Roles:      []string{"superuser"},
+			ClusterIDs: []string{config.ClusterID},
+		},
+	}
+
+	err := config.Validate()
+	if err == nil || !strings.Contains(err.Error(), "unsupported role") {
+		t.Fatalf("Validate error = %v, want unsupported role error", err)
+	}
+}
+
+func TestRejectDeprecatedStaticNodeTrustConfig(t *testing.T) {
+	err := rejectDeprecatedNodeTrustConfig([]byte(`{
+		"kubernetes": {
+			"node_evidence_tpm_policies": {},
+			"node_evidence_publishers": {}
+		}
+	}`))
+	if err == nil || !strings.Contains(err.Error(), "authenticated node enrollment") {
+		t.Fatalf("deprecated config error = %v, want migration guidance", err)
 	}
 }
 

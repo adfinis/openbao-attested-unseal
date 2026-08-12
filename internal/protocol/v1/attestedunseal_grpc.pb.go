@@ -235,7 +235,10 @@ var UnsealService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	EnrollmentService_Status_FullMethodName = "/openbao.attestedunseal.v1.EnrollmentService/Status"
+	EnrollmentService_Status_FullMethodName                      = "/openbao.attestedunseal.v1.EnrollmentService/Status"
+	EnrollmentService_EnrollNodeEvidence_FullMethodName          = "/openbao.attestedunseal.v1.EnrollmentService/EnrollNodeEvidence"
+	EnrollmentService_RevokeNodeEvidence_FullMethodName          = "/openbao.attestedunseal.v1.EnrollmentService/RevokeNodeEvidence"
+	EnrollmentService_ListNodeEvidenceEnrollments_FullMethodName = "/openbao.attestedunseal.v1.EnrollmentService/ListNodeEvidenceEnrollments"
 )
 
 // EnrollmentServiceClient is the client API for EnrollmentService service.
@@ -243,6 +246,9 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type EnrollmentServiceClient interface {
 	Status(ctx context.Context, in *EnrollmentStatusRequest, opts ...grpc.CallOption) (*EnrollmentStatusResponse, error)
+	EnrollNodeEvidence(ctx context.Context, in *NodeEvidenceEnrollmentRequest, opts ...grpc.CallOption) (*NodeEvidenceEnrollmentResponse, error)
+	RevokeNodeEvidence(ctx context.Context, in *NodeEvidenceRevocationRequest, opts ...grpc.CallOption) (*NodeEvidenceRevocationResponse, error)
+	ListNodeEvidenceEnrollments(ctx context.Context, in *NodeEvidenceEnrollmentListRequest, opts ...grpc.CallOption) (*NodeEvidenceEnrollmentListResponse, error)
 }
 
 type enrollmentServiceClient struct {
@@ -263,11 +269,44 @@ func (c *enrollmentServiceClient) Status(ctx context.Context, in *EnrollmentStat
 	return out, nil
 }
 
+func (c *enrollmentServiceClient) EnrollNodeEvidence(ctx context.Context, in *NodeEvidenceEnrollmentRequest, opts ...grpc.CallOption) (*NodeEvidenceEnrollmentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NodeEvidenceEnrollmentResponse)
+	err := c.cc.Invoke(ctx, EnrollmentService_EnrollNodeEvidence_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *enrollmentServiceClient) RevokeNodeEvidence(ctx context.Context, in *NodeEvidenceRevocationRequest, opts ...grpc.CallOption) (*NodeEvidenceRevocationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NodeEvidenceRevocationResponse)
+	err := c.cc.Invoke(ctx, EnrollmentService_RevokeNodeEvidence_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *enrollmentServiceClient) ListNodeEvidenceEnrollments(ctx context.Context, in *NodeEvidenceEnrollmentListRequest, opts ...grpc.CallOption) (*NodeEvidenceEnrollmentListResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(NodeEvidenceEnrollmentListResponse)
+	err := c.cc.Invoke(ctx, EnrollmentService_ListNodeEvidenceEnrollments_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // EnrollmentServiceServer is the server API for EnrollmentService service.
 // All implementations must embed UnimplementedEnrollmentServiceServer
 // for forward compatibility.
 type EnrollmentServiceServer interface {
 	Status(context.Context, *EnrollmentStatusRequest) (*EnrollmentStatusResponse, error)
+	EnrollNodeEvidence(context.Context, *NodeEvidenceEnrollmentRequest) (*NodeEvidenceEnrollmentResponse, error)
+	RevokeNodeEvidence(context.Context, *NodeEvidenceRevocationRequest) (*NodeEvidenceRevocationResponse, error)
+	ListNodeEvidenceEnrollments(context.Context, *NodeEvidenceEnrollmentListRequest) (*NodeEvidenceEnrollmentListResponse, error)
 	mustEmbedUnimplementedEnrollmentServiceServer()
 }
 
@@ -280,6 +319,15 @@ type UnimplementedEnrollmentServiceServer struct{}
 
 func (UnimplementedEnrollmentServiceServer) Status(context.Context, *EnrollmentStatusRequest) (*EnrollmentStatusResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Status not implemented")
+}
+func (UnimplementedEnrollmentServiceServer) EnrollNodeEvidence(context.Context, *NodeEvidenceEnrollmentRequest) (*NodeEvidenceEnrollmentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method EnrollNodeEvidence not implemented")
+}
+func (UnimplementedEnrollmentServiceServer) RevokeNodeEvidence(context.Context, *NodeEvidenceRevocationRequest) (*NodeEvidenceRevocationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeNodeEvidence not implemented")
+}
+func (UnimplementedEnrollmentServiceServer) ListNodeEvidenceEnrollments(context.Context, *NodeEvidenceEnrollmentListRequest) (*NodeEvidenceEnrollmentListResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListNodeEvidenceEnrollments not implemented")
 }
 func (UnimplementedEnrollmentServiceServer) mustEmbedUnimplementedEnrollmentServiceServer() {}
 func (UnimplementedEnrollmentServiceServer) testEmbeddedByValue()                           {}
@@ -320,6 +368,60 @@ func _EnrollmentService_Status_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _EnrollmentService_EnrollNodeEvidence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NodeEvidenceEnrollmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EnrollmentServiceServer).EnrollNodeEvidence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: EnrollmentService_EnrollNodeEvidence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EnrollmentServiceServer).EnrollNodeEvidence(ctx, req.(*NodeEvidenceEnrollmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _EnrollmentService_RevokeNodeEvidence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NodeEvidenceRevocationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EnrollmentServiceServer).RevokeNodeEvidence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: EnrollmentService_RevokeNodeEvidence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EnrollmentServiceServer).RevokeNodeEvidence(ctx, req.(*NodeEvidenceRevocationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _EnrollmentService_ListNodeEvidenceEnrollments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NodeEvidenceEnrollmentListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EnrollmentServiceServer).ListNodeEvidenceEnrollments(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: EnrollmentService_ListNodeEvidenceEnrollments_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EnrollmentServiceServer).ListNodeEvidenceEnrollments(ctx, req.(*NodeEvidenceEnrollmentListRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // EnrollmentService_ServiceDesc is the grpc.ServiceDesc for EnrollmentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -330,6 +432,18 @@ var EnrollmentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Status",
 			Handler:    _EnrollmentService_Status_Handler,
+		},
+		{
+			MethodName: "EnrollNodeEvidence",
+			Handler:    _EnrollmentService_EnrollNodeEvidence_Handler,
+		},
+		{
+			MethodName: "RevokeNodeEvidence",
+			Handler:    _EnrollmentService_RevokeNodeEvidence_Handler,
+		},
+		{
+			MethodName: "ListNodeEvidenceEnrollments",
+			Handler:    _EnrollmentService_ListNodeEvidenceEnrollments_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

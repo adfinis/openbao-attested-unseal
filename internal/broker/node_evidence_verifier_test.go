@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,25 +31,15 @@ func TestAdminServiceVerifiesEnrolledTPMNodeEvidenceAndRejectsReplay(t *testing.
 	if err != nil {
 		t.Fatalf("nodeEvidenceClientCertificateHash returned error: %v", err)
 	}
+	enrollments := enrolledTPMTestRepository(t, cache, now, public, publisherHash)
 	service := newAdminService(adminServiceConfig{
 		nodeEvidence:                 cache,
+		nodeEvidenceEnrollments:      enrollments,
 		challengeStore:               NewMemoryChallengeStore(),
 		policyID:                     "development",
 		nodeEvidencePublishProviders: []string{nodeevidence.ProviderTPM2Quote},
-		nodeEvidenceTPMPolicies: map[string]TPMNodeEvidencePolicy{
-			testNodeName: {
-				NodeUID: fixtureNodeUID,
-				Policy: tpmlocal.Policy{
-					Mode:                 tpmlocal.PolicyModeTPMOnly,
-					EnrolledAKPublicHash: tpmlocal.PublicDigest(public),
-				},
-			},
-		},
-		nodeEvidencePublishers: map[string]NodeEvidencePublisher{
-			publisherHash: {NodeNames: []string{testNodeName}},
-		},
-		challengeTTL:    time.Minute,
-		nodeEvidenceTTL: 30 * time.Second,
+		challengeTTL:                 time.Minute,
+		nodeEvidenceTTL:              30 * time.Second,
 	})
 	service.clock = func() time.Time { return now }
 
@@ -130,23 +121,13 @@ func TestAdminServiceBindsTPMChallengeToPublisherCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second certificate hash error: %v", err)
 	}
+	cache := NewMemoryNodeEvidenceCache()
+	enrollments := enrolledTPMTestRepository(t, cache, time.Now(), public, firstHash, secondHash)
 	service := newAdminService(adminServiceConfig{
-		nodeEvidence:                 NewMemoryNodeEvidenceCache(),
+		nodeEvidence:                 cache,
+		nodeEvidenceEnrollments:      enrollments,
 		challengeStore:               NewMemoryChallengeStore(),
 		nodeEvidencePublishProviders: []string{nodeevidence.ProviderTPM2Quote},
-		nodeEvidenceTPMPolicies: map[string]TPMNodeEvidencePolicy{
-			testNodeName: {
-				NodeUID: fixtureNodeUID,
-				Policy: tpmlocal.Policy{
-					Mode:                 tpmlocal.PolicyModeTPMOnly,
-					EnrolledAKPublicHash: tpmlocal.PublicDigest(public),
-				},
-			},
-		},
-		nodeEvidencePublishers: map[string]NodeEvidencePublisher{
-			firstHash:  {NodeNames: []string{testNodeName}},
-			secondHash: {NodeNames: []string{testNodeName}},
-		},
 	})
 	challenge, err := service.ChallengeNodeEvidence(firstCtx, &protocolv1.NodeEvidenceChallengeRequest{
 		ClusterId:  "prod-eu1",
@@ -191,18 +172,18 @@ func TestAdminServiceBindsTPMChallengeToPublisherCertificate(t *testing.T) {
 func TestAdminServiceRejectsTPMChallengeForWrongNodeUID(t *testing.T) {
 	t.Parallel()
 	_, public := syntheticNodeEvidenceAK(t)
+	cache := NewMemoryNodeEvidenceCache()
+	enrollments := enrolledTPMTestRepository(
+		t,
+		cache,
+		time.Now(),
+		public,
+		"sha256:"+strings.Repeat("ab", 32),
+	)
 	service := newAdminService(adminServiceConfig{
-		nodeEvidence:                 NewMemoryNodeEvidenceCache(),
+		nodeEvidence:                 cache,
+		nodeEvidenceEnrollments:      enrollments,
 		nodeEvidencePublishProviders: []string{nodeevidence.ProviderTPM2Quote},
-		nodeEvidenceTPMPolicies: map[string]TPMNodeEvidencePolicy{
-			testNodeName: {
-				NodeUID: fixtureNodeUID,
-				Policy: tpmlocal.Policy{
-					Mode:                 tpmlocal.PolicyModeTPMOnly,
-					EnrolledAKPublicHash: tpmlocal.PublicDigest(public),
-				},
-			},
-		},
 	})
 	response, err := service.ChallengeNodeEvidence(context.Background(), &protocolv1.NodeEvidenceChallengeRequest{
 		ClusterId:  "prod-eu1",
@@ -229,21 +210,12 @@ func TestAdminServiceRequiresNodeScopedTPMPublisherCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("nodeEvidenceClientCertificateHash returned error: %v", err)
 	}
+	cache := NewMemoryNodeEvidenceCache()
+	enrollments := enrolledTPMTestRepository(t, cache, time.Now(), public, authorizedHash)
 	service := newAdminService(adminServiceConfig{
-		nodeEvidence:                 NewMemoryNodeEvidenceCache(),
+		nodeEvidence:                 cache,
+		nodeEvidenceEnrollments:      enrollments,
 		nodeEvidencePublishProviders: []string{nodeevidence.ProviderTPM2Quote},
-		nodeEvidenceTPMPolicies: map[string]TPMNodeEvidencePolicy{
-			testNodeName: {
-				NodeUID: fixtureNodeUID,
-				Policy: tpmlocal.Policy{
-					Mode:                 tpmlocal.PolicyModeTPMOnly,
-					EnrolledAKPublicHash: tpmlocal.PublicDigest(public),
-				},
-			},
-		},
-		nodeEvidencePublishers: map[string]NodeEvidencePublisher{
-			authorizedHash: {NodeNames: []string{testNodeName}},
-		},
 	})
 	request := &protocolv1.NodeEvidenceChallengeRequest{
 		ClusterId:  "prod-eu1",
@@ -291,6 +263,33 @@ func nodeEvidencePublisherTestContext(t *testing.T, certificateDER []byte) conte
 			PeerCertificates: []*x509.Certificate{{Raw: certificateDER}},
 		}},
 	})
+}
+
+func enrolledTPMTestRepository(
+	t *testing.T,
+	evidence *nodeevidence.MemoryRepository,
+	now time.Time,
+	public []byte,
+	publisherHashes ...string,
+) *nodeevidence.MemoryEnrollmentRepository {
+	t.Helper()
+	repository := nodeevidence.NewMemoryEnrollmentRepository(evidence)
+	_, err := repository.EnrollNodeEvidence(context.Background(), nodeevidence.EnrollmentRequest{
+		ClusterID: "prod-eu1",
+		NodeName:  testNodeName,
+		NodeUID:   fixtureNodeUID,
+		Provider:  nodeevidence.ProviderTPM2Quote,
+		TPMPolicy: tpmlocal.Policy{
+			Mode:                 tpmlocal.PolicyModeTPMOnly,
+			EnrolledAKPublicHash: tpmlocal.PublicDigest(public),
+		},
+		PublisherCertificateHashes: publisherHashes,
+		EnrolledAt:                 now,
+	})
+	if err != nil {
+		t.Fatalf("EnrollNodeEvidence returned error: %v", err)
+	}
+	return repository
 }
 
 func syntheticNodeEvidenceAK(t *testing.T) (*rsa.PrivateKey, []byte) {
