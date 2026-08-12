@@ -1,0 +1,32 @@
+id: no-static-node-trust-config
+snapshots:
+  ? |
+    package p
+
+    type KubernetesConfig struct {
+      NodeEvidencePublishers map[string]Publisher `json:"node_evidence_publishers"`
+    }
+  : labels:
+    - source: NodeEvidencePublishers map[string]Publisher `json:"node_evidence_publishers"`
+      style: primary
+      start: 44
+      end: 121
+    - source: map[string]Publisher
+      style: secondary
+      start: 67
+      end: 87
+  ? |
+    package p
+
+    type KubernetesConfig struct {
+      NodeEvidenceTPMPolicies map[string]Policy `json:"node_evidence_tpm_policies"`
+    }
+  : labels:
+    - source: NodeEvidenceTPMPolicies map[string]Policy `json:"node_evidence_tpm_policies"`
+      style: primary
+      start: 44
+      end: 121
+    - source: map[string]Policy
+      style: secondary
+      start: 68
+      end: 85

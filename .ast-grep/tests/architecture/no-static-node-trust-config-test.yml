@@ -1,0 +1,21 @@
+id: no-static-node-trust-config
+valid:
+  - |
+    package p
+
+    type ControlPlaneConfig struct {
+      Identities map[string]Identity `json:"identities"`
+    }
+invalid:
+  - |
+    package p
+
+    type KubernetesConfig struct {
+      NodeEvidenceTPMPolicies map[string]Policy `json:"node_evidence_tpm_policies"`
+    }
+  - |
+    package p
+
+    type KubernetesConfig struct {
+      NodeEvidencePublishers map[string]Publisher `json:"node_evidence_publishers"`
+    }
