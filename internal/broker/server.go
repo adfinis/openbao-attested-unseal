@@ -10,6 +10,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/adfinis/openbao-attested-unseal/internal/keyprotection"
+	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -45,7 +47,23 @@ func NewRuntime(ctx context.Context, config Config) (*Runtime, error) {
 			_ = store.Close()
 			return nil, err
 		}
-		if err := store.ConfigureDevelopment(ctx, config, key); err != nil {
+		protectedKey, err := (keyprotection.DevelopmentProtector{}).Protect(ctx, keyring.KeyVersion{
+			Ref: keyring.KeyRef{
+				ClusterID: config.ClusterID,
+				KeyID:     config.KeyID,
+				Version:   1,
+			},
+			Status:    keyring.StatusActive,
+			Algorithm: keyring.AlgorithmAES256GCM,
+			PolicyID:  config.Policy(),
+			Material:  key,
+		})
+		clear(key)
+		if err != nil {
+			_ = store.Close()
+			return nil, err
+		}
+		if err := store.ConfigureDevelopment(ctx, config, protectedKey); err != nil {
 			_ = store.Close()
 			return nil, err
 		}

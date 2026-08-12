@@ -57,6 +57,11 @@ decision latency.
 instrumentation active without installing an exporter. `stdout` emits JSON
 traces and metrics to stdout for local validation.
 
+`keyring_protection_profile` currently supports only `development`. Its stored
+payload is intentionally plaintext and is suitable only for tests and local
+labs. The database schema and runtime use a protector boundary, but no
+production at-rest protector is implemented yet.
+
 The optional `kubernetes` block is disabled by default. When enabled, the
 broker validates the TokenReview audience, namespace, service account, and node
 evidence freshness window. `node_evidence_retention_seconds` controls how long
@@ -90,9 +95,8 @@ are not daemon configuration.
 The removed `node_evidence_tpm_policies` and `node_evidence_publishers` keys are
 rejected at startup. Enroll each node through the running broker before starting
 its TPM evidence agent; the broker does not silently import old static trust.
-During database migration, TPM evidence without an enrollment revision is
-discarded and must be republished after enrollment. Fake/local lab evidence is
-unchanged.
+This project has not released a durable database format. Reinitialize preview
+databases after schema changes.
 
 The agent first requests a single-use broker challenge, collects a raw TPM
 quote over that nonce, and submits the raw evidence. The broker verifies the

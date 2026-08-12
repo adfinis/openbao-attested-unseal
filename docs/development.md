@@ -44,10 +44,8 @@ This cleanup does not remove shared Go caches or Docker data.
 
 Architecture rules live under `.ast-grep/rules/` and have positive and negative
 fixtures under `.ast-grep/tests/`. Error-severity rules fail CI. Warning rules
-are used only during a bounded migration and should be promoted to errors when
-the corresponding boundary is clean. The complementary Go package-graph test
-under `internal/architecture/` prevents forbidden dependency edges even when
-imports use aliases or are split across files.
+are temporary and should be promoted to errors when the corresponding boundary
+is clean.
 
 ## End-to-end tests
 

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	k8sprovider "github.com/adfinis/openbao-attested-unseal/internal/attestation/providers/kubernetes"
+	"github.com/adfinis/openbao-attested-unseal/internal/keyprotection"
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	"go.opentelemetry.io/otel/attribute"
@@ -39,10 +40,53 @@ const (
 	testNodeName          = "node-a"
 )
 
-func TestSQLiteMigrationIdempotency(t *testing.T) {
+func TestSQLiteSchemaInitializationIsIdempotent(t *testing.T) {
 	store := newTestStore(t, testConfig(t))
-	if err := store.Migrate(context.Background()); err != nil {
-		t.Fatalf("Migrate returned error: %v", err)
+	if err := store.InitializeSchema(context.Background()); err != nil {
+		t.Fatalf("InitializeSchema returned error: %v", err)
+	}
+}
+
+func TestSQLiteKeyVersionsPersistProtectedRecordsOnly(t *testing.T) {
+	store := newTestStore(t, testConfig(t))
+	rows, err := store.db.QueryContext(
+		context.Background(),
+		`SELECT name FROM pragma_table_info('key_versions')`,
+	)
+	if err != nil {
+		t.Fatalf("query key_versions columns: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan key_versions column: %v", err)
+		}
+		columns[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate key_versions columns: %v", err)
+	}
+	for _, name := range []string{"protector_profile", "protected_format", "protected_payload"} {
+		if !columns[name] {
+			t.Errorf("key_versions missing %q column", name)
+		}
+	}
+	if columns["material"] {
+		t.Error("key_versions must not expose a raw material column")
+	}
+
+	var migrationTables int
+	if err := store.db.QueryRowContext(
+		context.Background(),
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'`,
+	).Scan(&migrationTables); err != nil {
+		t.Fatalf("query migration table: %v", err)
+	}
+	if migrationTables != 0 {
+		t.Error("fresh pre-release schema must not create a migration ledger")
 	}
 }
 
@@ -192,7 +236,7 @@ func TestBrokerWrapUnwrapRoundTripAndRestartReload(t *testing.T) {
 	if _, err := reopened.Subject(context.Background(), config.ClusterID, config.DevelopmentSubject); err != nil {
 		t.Fatalf("Subject after restart returned error: %v", err)
 	}
-	if _, err := reopened.LoadKeyring(context.Background(), config.ClusterID); err != nil {
+	if _, err := testDevelopmentLoader(reopened).LoadKeyring(context.Background(), config.ClusterID); err != nil {
 		t.Fatalf("LoadKeyring after restart returned error: %v", err)
 	}
 }
@@ -335,13 +379,16 @@ func TestDecryptOnlyKeyCannotWrap(t *testing.T) {
 	}
 	_, err = store.db.ExecContext(
 		context.Background(),
-		`INSERT INTO key_versions(cluster_id, key_id, version, status, algorithm, policy_id, material, created_at)
-		 VALUES (?, ?, 2, ?, ?, ?, ?, ?)`,
+		`INSERT INTO key_versions(cluster_id, key_id, version, status, algorithm, policy_id,
+		   protector_profile, protected_format, protected_payload, created_at)
+		 VALUES (?, ?, 2, ?, ?, ?, ?, ?, ?, ?)`,
 		config.ClusterID,
 		config.KeyID,
 		string(keyring.StatusActive),
 		string(keyring.AlgorithmAES256GCM),
 		config.Policy(),
+		keyprotection.ProfileDevelopment,
+		keyprotection.FormatDevelopmentPlaintextV1,
 		bytes.Repeat([]byte{2}, keyring.KeySize),
 		time.Now().UTC().Format(time.RFC3339Nano),
 	)
@@ -349,7 +396,13 @@ func TestDecryptOnlyKeyCannotWrap(t *testing.T) {
 		t.Fatalf("insert key version returned error: %v", err)
 	}
 	telemetry := newTestTelemetry(t)
-	service := NewService(config, store, NewFileAuditSink(config.AuditFilePath, false), telemetry)
+	service := NewService(
+		config,
+		store,
+		testDevelopmentLoader(store),
+		NewFileAuditSink(config.AuditFilePath, false),
+		telemetry,
+	)
 	challenge := testChallenge(t, config)
 	if err := store.CreateChallenge(context.Background(), challenge); err != nil {
 		t.Fatalf("CreateChallenge returned error: %v", err)
@@ -375,6 +428,7 @@ func TestEvidenceVerifierFailureDeniesWrap(t *testing.T) {
 	service := NewServiceWithEvidenceVerifier(
 		config,
 		store,
+		testDevelopmentLoader(store),
 		NewFileAuditSink(config.AuditFilePath, false),
 		telemetry,
 		failingEvidenceVerifier{},
@@ -410,6 +464,7 @@ func TestKubernetesEvidenceVerifierAuthorizesWorkload(t *testing.T) {
 	service := NewServiceWithEvidenceVerifierAndNodeEvidence(
 		config,
 		store,
+		testDevelopmentLoader(store),
 		NewFileAuditSink(config.AuditFilePath, false),
 		telemetry,
 		testKubernetesEvidenceVerifier(testKubernetesTokenReviewStatus()),
@@ -597,6 +652,7 @@ func TestKubernetesWorkloadNodeEvidencePolicyDenials(t *testing.T) {
 			service := NewServiceWithEvidenceVerifierAndNodeEvidence(
 				config,
 				store,
+				testDevelopmentLoader(store),
 				NewFileAuditSink(config.AuditFilePath, false),
 				newTestTelemetry(t),
 				testKubernetesEvidenceVerifier(testKubernetesTokenReviewStatus()),
@@ -856,10 +912,45 @@ func newTestStore(t *testing.T, config Config) *SQLiteStore {
 	if err != nil {
 		t.Fatalf("DevelopmentWrappingKey returned error: %v", err)
 	}
-	if err := store.ConfigureDevelopment(context.Background(), config, key); err != nil {
+	protectedKey := protectTestKey(
+		t,
+		config,
+		keyring.KeyRef{ClusterID: config.ClusterID, KeyID: config.KeyID, Version: 1},
+		keyring.StatusActive,
+		key,
+	)
+	if err := store.ConfigureDevelopment(context.Background(), config, protectedKey); err != nil {
 		t.Fatalf("ConfigureDevelopment returned error: %v", err)
 	}
 	return store
+}
+
+func testDevelopmentLoader(repository keyprotection.Repository) keyprotection.Loader {
+	return keyprotection.Loader{
+		Repository: repository,
+		Protector:  keyprotection.DevelopmentProtector{},
+	}
+}
+
+func protectTestKey(
+	t *testing.T,
+	config Config,
+	ref keyring.KeyRef,
+	status keyring.Status,
+	material []byte,
+) keyprotection.ProtectedKey {
+	t.Helper()
+	record, err := (keyprotection.DevelopmentProtector{}).Protect(context.Background(), keyring.KeyVersion{
+		Ref:       ref,
+		Status:    status,
+		Algorithm: keyring.AlgorithmAES256GCM,
+		PolicyID:  config.Policy(),
+		Material:  material,
+	})
+	if err != nil {
+		t.Fatalf("Protect returned error: %v", err)
+	}
+	return record
 }
 
 func newTestRuntime(t *testing.T, config Config) *Runtime {

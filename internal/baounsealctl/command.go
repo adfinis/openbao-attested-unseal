@@ -26,6 +26,7 @@ import (
 	"github.com/adfinis/openbao-attested-unseal/internal/broker"
 	"github.com/adfinis/openbao-attested-unseal/internal/cli"
 	"github.com/adfinis/openbao-attested-unseal/internal/enrollment"
+	"github.com/adfinis/openbao-attested-unseal/internal/keyprotection"
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	"github.com/adfinis/openbao-attested-unseal/internal/recovery"
@@ -118,6 +119,7 @@ func initCommand(args []string, stdout io.Writer, stderr io.Writer) error {
 	if err != nil {
 		return cli.WithExitCode(cli.ExitRuntime, err)
 	}
+	defer clear(material)
 	packageID, err := randomID("rpkg")
 	if err != nil {
 		return cli.WithExitCode(cli.ExitRuntime, err)
@@ -135,19 +137,25 @@ func initCommand(args []string, stdout io.Writer, stderr io.Writer) error {
 		return cli.WithExitCode(cli.ExitConfig, err)
 	}
 	defer func() { _ = store.Close() }()
-	if err := store.BootstrapKeyring(cli.ProcessContext(), broker.BootstrapKeyringRequest{
-		ClusterID:            *clusterID,
-		KeyID:                *keyID,
-		Profile:              strings.TrimSpace(*keyringProfile),
-		PolicyID:             *policyID,
-		Material:             material,
-		RecoveryPackageID:    recoveryPackage.Metadata.PackageID,
-		RecoveryThreshold:    recoveryPackage.Metadata.Threshold,
-		RecoveryShares:       recoveryPackage.Metadata.Shares,
-		RecoveryChecksum:     recoveryPackage.Metadata.SecretChecksum,
-		RecoveryMetadataJSON: string(metadataJSON),
-		CreatedAt:            now,
-	}); err != nil {
+	if err := bootstrapDevelopmentKeyring(
+		cli.ProcessContext(),
+		store,
+		keyring.KeyVersion{
+			Ref:       keyring.KeyRef{ClusterID: *clusterID, KeyID: *keyID, Version: 1},
+			Status:    keyring.StatusActive,
+			Algorithm: keyring.AlgorithmAES256GCM,
+			PolicyID:  *policyID,
+			Material:  material,
+		},
+		broker.BootstrapKeyringRequest{
+			RecoveryPackageID:    recoveryPackage.Metadata.PackageID,
+			RecoveryThreshold:    recoveryPackage.Metadata.Threshold,
+			RecoveryShares:       recoveryPackage.Metadata.Shares,
+			RecoveryChecksum:     recoveryPackage.Metadata.SecretChecksum,
+			RecoveryMetadataJSON: string(metadataJSON),
+			CreatedAt:            now,
+		},
+	); err != nil {
 		return cli.WithExitCode(cli.ExitRuntime, err)
 	}
 	if err := writeJSONFile(*recoveryPath, recoveryPackage.Metadata); err != nil {
@@ -207,7 +215,7 @@ func statusCommand(args []string, stdout io.Writer, stderr io.Writer) error {
 		return cli.WithExitCode(cli.ExitConfig, err)
 	}
 	defer func() { _ = store.Close() }()
-	ring, err := store.LoadKeyring(cli.ProcessContext(), *clusterID)
+	ring, err := developmentKeyringLoader(store).LoadKeyring(cli.ProcessContext(), *clusterID)
 	if err != nil {
 		return cli.WithExitCode(cli.ExitCheckFailed, err)
 	}
@@ -571,7 +579,7 @@ func applyEnrollmentGrant(options enrollApplyOptions) (enrollApplyOutput, error)
 }
 
 func checkBrokerReady(ctx context.Context, store *broker.SQLiteStore, clusterID string) error {
-	ring, err := store.LoadKeyring(ctx, clusterID)
+	ring, err := developmentKeyringLoader(store).LoadKeyring(ctx, clusterID)
 	if err != nil {
 		return fmt.Errorf("broker status check failed: %w", err)
 	}
@@ -687,6 +695,7 @@ func startRotation(options rotateStartOptions) (rotateOutput, error) {
 	if err != nil {
 		return rotateOutput{}, cli.WithExitCode(cli.ExitRuntime, err)
 	}
+	defer clear(material)
 	operationID, err := randomID("rot")
 	if err != nil {
 		return rotateOutput{}, cli.WithExitCode(cli.ExitRuntime, err)
@@ -696,12 +705,23 @@ func startRotation(options rotateStartOptions) (rotateOutput, error) {
 		return rotateOutput{}, cli.WithExitCode(cli.ExitConfig, err)
 	}
 	defer func() { _ = store.Close() }()
+	ref, err := store.NextRotationKeyRef(cli.ProcessContext(), options.clusterID, options.keyID)
+	if err != nil {
+		return rotateOutput{}, cli.WithExitCode(cli.ExitCheckFailed, err)
+	}
+	protectedKey, err := protectDevelopmentKey(
+		cli.ProcessContext(),
+		ref,
+		keyring.StatusPending,
+		options.policyID,
+		material,
+	)
+	if err != nil {
+		return rotateOutput{}, cli.WithExitCode(cli.ExitRuntime, err)
+	}
 	operation, err := store.StartRotation(cli.ProcessContext(), broker.RotationStartRequest{
 		OperationID: operationID,
-		ClusterID:   options.clusterID,
-		KeyID:       options.keyID,
-		PolicyID:    options.policyID,
-		Material:    material,
+		Key:         protectedKey,
 		CreatedAt:   time.Now().UTC(),
 	})
 	if err != nil {
@@ -740,7 +760,7 @@ func rotateActivateCommand(args []string, stdout io.Writer, stderr io.Writer) er
 		return cli.WithExitCode(cli.ExitCheckFailed, err)
 	}
 	policyID := "rotation"
-	keyVersion, err := store.KeyVersion(cli.ProcessContext(), keyring.KeyRef{
+	keyVersion, err := store.ProtectedKey(cli.ProcessContext(), keyring.KeyRef{
 		ClusterID: operation.ClusterID,
 		KeyID:     operation.KeyID,
 		Version:   operation.ToVersion,
@@ -881,7 +901,7 @@ func rotateOpenBAORoot(options rotateOpenBAORootOptions) (rotateOpenBAORootOutpu
 			),
 		)
 	}
-	keyVersion, err := store.KeyVersion(cli.ProcessContext(), keyring.KeyRef{
+	keyVersion, err := store.ProtectedKey(cli.ProcessContext(), keyring.KeyRef{
 		ClusterID: operation.ClusterID,
 		KeyID:     operation.KeyID,
 		Version:   operation.ToVersion,
@@ -1911,6 +1931,7 @@ func recoverEnroll(options recoverEnrollOptions) (recoverEnrollOutput, error) {
 	if err != nil {
 		return recoverEnrollOutput{}, err
 	}
+	defer clear(secret)
 	now := time.Now().UTC()
 	if err := bootstrapRecoveredKeyring(store, options, metadata, secret, targetRequest, now); err != nil {
 		return recoverEnrollOutput{}, err
@@ -2015,19 +2036,25 @@ func bootstrapRecoveredKeyring(
 	if err != nil {
 		return cli.WithExitCode(cli.ExitRuntime, err)
 	}
-	if err := store.BootstrapKeyring(cli.ProcessContext(), broker.BootstrapKeyringRequest{
-		ClusterID:            metadata.ClusterID,
-		KeyID:                metadata.KeyID,
-		Profile:              options.keyringProfile,
-		PolicyID:             options.policyID,
-		Material:             secret,
-		RecoveryPackageID:    metadata.PackageID,
-		RecoveryThreshold:    metadata.Threshold,
-		RecoveryShares:       metadata.Shares,
-		RecoveryChecksum:     metadata.SecretChecksum,
-		RecoveryMetadataJSON: string(metadataJSON),
-		CreatedAt:            now,
-	}); err != nil {
+	if err := bootstrapDevelopmentKeyring(
+		cli.ProcessContext(),
+		store,
+		keyring.KeyVersion{
+			Ref:       keyring.KeyRef{ClusterID: metadata.ClusterID, KeyID: metadata.KeyID, Version: 1},
+			Status:    keyring.StatusActive,
+			Algorithm: keyring.AlgorithmAES256GCM,
+			PolicyID:  options.policyID,
+			Material:  secret,
+		},
+		broker.BootstrapKeyringRequest{
+			RecoveryPackageID:    metadata.PackageID,
+			RecoveryThreshold:    metadata.Threshold,
+			RecoveryShares:       metadata.Shares,
+			RecoveryChecksum:     metadata.SecretChecksum,
+			RecoveryMetadataJSON: string(metadataJSON),
+			CreatedAt:            now,
+		},
+	); err != nil {
 		return cli.WithExitCode(cli.ExitRuntime, err)
 	}
 	if err := store.InsertSubject(
@@ -2374,11 +2401,48 @@ func validateFormat(format string) error {
 
 func validateKeyringProfile(profile string) error {
 	switch strings.TrimSpace(profile) {
-	case broker.DevelopmentProfile, "recovery-threshold", "broker-tpm":
+	case broker.DevelopmentProfile:
 		return nil
 	default:
 		return cli.WithExitCode(cli.ExitUsage, fmt.Errorf("unsupported keyring profile %q", profile))
 	}
+}
+
+func developmentKeyringLoader(repository keyprotection.Repository) keyprotection.Loader {
+	return keyprotection.Loader{
+		Repository: repository,
+		Protector:  keyprotection.DevelopmentProtector{},
+	}
+}
+
+func protectDevelopmentKey(
+	ctx context.Context,
+	ref keyring.KeyRef,
+	status keyring.Status,
+	policyID string,
+	material []byte,
+) (keyprotection.ProtectedKey, error) {
+	return (keyprotection.DevelopmentProtector{}).Protect(ctx, keyring.KeyVersion{
+		Ref:       ref,
+		Status:    status,
+		Algorithm: keyring.AlgorithmAES256GCM,
+		PolicyID:  policyID,
+		Material:  material,
+	})
+}
+
+func bootstrapDevelopmentKeyring(
+	ctx context.Context,
+	store *broker.SQLiteStore,
+	unlockedKey keyring.KeyVersion,
+	request broker.BootstrapKeyringRequest,
+) error {
+	protectedKey, err := (keyprotection.DevelopmentProtector{}).Protect(ctx, unlockedKey)
+	if err != nil {
+		return err
+	}
+	request.Key = protectedKey
+	return store.BootstrapKeyring(ctx, request)
 }
 
 func validateApprovalMode(mode string) (string, error) {
