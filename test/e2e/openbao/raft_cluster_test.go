@@ -18,7 +18,7 @@ import (
 	tcexec "github.com/testcontainers/testcontainers-go/exec"
 )
 
-func TestBrokerRaft3NodeAutoUnsealWithOpenBaoBeta(t *testing.T) {
+func TestBrokerRaft3NodeAutoUnsealWithOpenBao(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Docker-backed E2E is not supported on Windows")
 	}

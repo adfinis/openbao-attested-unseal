@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func TestBrokerAutoUnsealWithOpenBaoBeta(t *testing.T) {
+func TestBrokerAutoUnsealWithOpenBao(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Docker bind mounts in this E2E are not supported on Windows")
 	}
@@ -57,7 +57,7 @@ func TestBrokerAutoUnsealWithOpenBaoBeta(t *testing.T) {
 	keep := os.Getenv("OPENBAO_E2E_KEEP") == "1"
 	if !keep {
 		t.Cleanup(func() {
-			dockerIgnore(t, "rm", "-f", baoName, brokerName)
+			dockerIgnore(t, "rm", "-f", "-v", baoName, brokerName)
 			dockerIgnore(t, "volume", "rm", baoVolume, traceVolume)
 			dockerIgnore(t, "network", "rm", networkName)
 		})
@@ -136,7 +136,7 @@ func TestBrokerAutoUnsealWithOpenBaoBeta(t *testing.T) {
 	assertLastTraceKeyID(t, afterRotateEvents, "encrypt", "prod-eu1/root/v2")
 	decryptCountBeforeRestart := countTraceOperation(afterRotateEvents, "decrypt")
 
-	docker(t, false, "rm", "-f", baoName)
+	docker(t, false, "rm", "-f", "-v", baoName)
 	startOpenBaoBroker(t, openbaoImage, baoName, networkName, baoVolume, traceVolume, pluginDir, configDir)
 	afterRestart := waitForStatus(t, baoName, true, false, 90*time.Second)
 	assertStatus(t, afterRestart, true, false)
