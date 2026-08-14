@@ -11,20 +11,36 @@ strict defaults:
 - redacted logs, audit records, and command output;
 - mechanically enforced package and adapter boundaries.
 
-Run the core quality gate with:
+Run the everyday development gate with:
+
+```sh
+make check
+```
+
+The gate verifies generated protobuf output, module tidiness, documentation
+characters, formatting, ast-grep architecture rules, Semgrep security rules,
+Go analysis, vulnerability scanning, unit tests, and local builds. Run the full
+CI-equivalent gate once on the final branch before publication:
 
 ```sh
 make ci-core
 ```
 
-The gate verifies generated protobuf output, module tidiness, documentation
-characters, formatting, ast-grep architecture rules, Semgrep security rules,
-Go analysis, vulnerability scanning, unit and race tests, local builds, and
-cross-compiled release artifacts. Optional tools are installed with:
+The full gate adds race tests and cross-compiled release artifacts. Optional
+tools are installed with:
 
 ```sh
 make bootstrap
 ```
+
+Remove ignored build outputs and checkout-local tools before deleting or
+archiving a worktree with:
+
+```sh
+make clean-worktree
+```
+
+This cleanup does not remove shared Go caches or Docker data.
 
 Architecture rules live under `.ast-grep/rules/` and have positive and negative
 fixtures under `.ast-grep/tests/`. Error-severity rules fail CI. Warning rules

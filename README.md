@@ -28,14 +28,15 @@ incomplete.
 ## Development checks
 
 ```sh
-make ci-core
+make check
 make test-e2e
-make build
 ```
 
-Docker-backed E2E tests are separate from the core quality gate. They cover
-broker mode, local TPM with `swtpm`, Kubernetes RBAC and kind deployment, and a
-three-node OpenBao Raft cluster.
+`make check` is the everyday development gate. Run `make ci-core` once on the
+final branch before publication; it adds race tests and cross-compiled release
+artifacts. Docker-backed E2E tests remain separate and cover broker mode, local
+TPM with `swtpm`, Kubernetes RBAC and kind deployment, and a three-node OpenBao
+Raft cluster.
 
 ## Documentation
 
