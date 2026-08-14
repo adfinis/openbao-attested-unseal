@@ -13,6 +13,9 @@ service UnsealService {
 
 service EnrollmentService {
   rpc Status(EnrollmentStatusRequest) returns (EnrollmentStatusResponse);
+  rpc EnrollNodeEvidence(NodeEvidenceEnrollmentRequest) returns (NodeEvidenceEnrollmentResponse);
+  rpc RevokeNodeEvidence(NodeEvidenceRevocationRequest) returns (NodeEvidenceRevocationResponse);
+  rpc ListNodeEvidenceEnrollments(NodeEvidenceEnrollmentListRequest) returns (NodeEvidenceEnrollmentListResponse);
 }
 
 service RecoveryService {
@@ -190,6 +193,73 @@ message NodeEvidencePublishRequest {
 
 message NodeEvidencePublishResponse {
   NodeEvidenceRecord evidence = 1;
+  PolicyDecision decision = 2;
+}
+
+message NodeEvidencePCRPolicy {
+  string hash = 1;
+  repeated uint32 pcrs = 2;
+  string expected_digest = 3;
+  string profile = 4;
+}
+
+message NodeEvidenceTPMPolicy {
+  string mode = 1;
+  string enrolled_ak_public_hash = 2;
+  NodeEvidencePCRPolicy pcr_policy = 3;
+  string provider_profile = 4;
+}
+
+message NodeEvidenceEnrollmentRecord {
+  string cluster_id = 1;
+  string node_name = 2;
+  string node_uid = 3;
+  string provider_id = 4;
+  NodeEvidenceTPMPolicy tpm_policy = 5;
+  repeated string publisher_certificate_sha256 = 6;
+  uint64 revision = 7;
+  int64 enrolled_unix_seconds = 8;
+  int64 updated_unix_seconds = 9;
+  int64 revoked_unix_seconds = 10;
+}
+
+message NodeEvidenceEnrollmentRequest {
+  string cluster_id = 1;
+  string node_name = 2;
+  string node_uid = 3;
+  string provider_id = 4;
+  NodeEvidenceTPMPolicy tpm_policy = 5;
+  repeated string publisher_certificate_sha256 = 6;
+  string reason = 7;
+  AuditContext audit = 8;
+}
+
+message NodeEvidenceEnrollmentResponse {
+  NodeEvidenceEnrollmentRecord enrollment = 1;
+  PolicyDecision decision = 2;
+}
+
+message NodeEvidenceRevocationRequest {
+  string cluster_id = 1;
+  string node_name = 2;
+  string reason = 3;
+  AuditContext audit = 4;
+}
+
+message NodeEvidenceRevocationResponse {
+  NodeEvidenceEnrollmentRecord enrollment = 1;
+  PolicyDecision decision = 2;
+}
+
+message NodeEvidenceEnrollmentListRequest {
+  string cluster_id = 1;
+  string node_name = 2;
+  bool include_revoked = 3;
+  AuditContext audit = 4;
+}
+
+message NodeEvidenceEnrollmentListResponse {
+  repeated NodeEvidenceEnrollmentRecord enrollments = 1;
   PolicyDecision decision = 2;
 }
 

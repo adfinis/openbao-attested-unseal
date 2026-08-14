@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 	"github.com/adfinis/openbao-attested-unseal/internal/nodeevidence"
-	tpmlocal "github.com/adfinis/openbao-attested-unseal/internal/tpm"
 )
 
 const (
@@ -38,56 +36,60 @@ const (
 
 // Config describes one broker daemon instance.
 type Config struct {
-	ListenAddress             string           `json:"listen_address"`
-	TLSCertFile               string           `json:"tls_cert_file"`
-	TLSKeyFile                string           `json:"tls_key_file"`
-	ClientCAFile              string           `json:"client_ca_file"`
-	RequireClientCert         bool             `json:"require_client_cert"`
-	AllowPlaintextForTests    bool             `json:"allow_plaintext_for_tests"`
-	SQLitePath                string           `json:"sqlite_path"`
-	AuditFilePath             string           `json:"audit_file_path"`
-	AuditFsync                bool             `json:"audit_fsync"`
-	OTelExporter              string           `json:"otel_exporter"`
-	DefaultPolicyPath         string           `json:"default_policy_path"`
-	KeyringProtectionProfile  string           `json:"keyring_protection_profile"`
-	ClusterID                 string           `json:"cluster_id"`
-	KeyID                     string           `json:"key_id"`
-	PolicyID                  string           `json:"policy_id"`
-	DevelopmentSubject        string           `json:"development_subject"`
-	DevelopmentWrappingKeyB64 string           `json:"development_wrapping_key_b64"`
-	ChallengeTTLSeconds       int64            `json:"challenge_ttl_seconds"`
-	Kubernetes                KubernetesConfig `json:"kubernetes"`
-	DefaultPolicy             PolicyDocument   `json:"-"`
+	ListenAddress             string             `json:"listen_address"`
+	TLSCertFile               string             `json:"tls_cert_file"`
+	TLSKeyFile                string             `json:"tls_key_file"`
+	ClientCAFile              string             `json:"client_ca_file"`
+	RequireClientCert         bool               `json:"require_client_cert"`
+	AllowPlaintextForTests    bool               `json:"allow_plaintext_for_tests"`
+	SQLitePath                string             `json:"sqlite_path"`
+	AuditFilePath             string             `json:"audit_file_path"`
+	AuditFsync                bool               `json:"audit_fsync"`
+	OTelExporter              string             `json:"otel_exporter"`
+	DefaultPolicyPath         string             `json:"default_policy_path"`
+	KeyringProtectionProfile  string             `json:"keyring_protection_profile"`
+	ClusterID                 string             `json:"cluster_id"`
+	KeyID                     string             `json:"key_id"`
+	PolicyID                  string             `json:"policy_id"`
+	ControlPlane              ControlPlaneConfig `json:"control_plane"`
+	DevelopmentSubject        string             `json:"development_subject"`
+	DevelopmentWrappingKeyB64 string             `json:"development_wrapping_key_b64"`
+	ChallengeTTLSeconds       int64              `json:"challenge_ttl_seconds"`
+	Kubernetes                KubernetesConfig   `json:"kubernetes"`
+	DefaultPolicy             PolicyDocument     `json:"-"`
 }
 
 // KubernetesConfig contains the optional Kubernetes workload verifier configuration.
 type KubernetesConfig struct {
-	Enabled                          bool                             `json:"enabled"`
-	APIServer                        string                           `json:"api_server"`
-	CACertFile                       string                           `json:"ca_cert_file"`
-	BearerTokenFile                  string                           `json:"bearer_token_file"`
-	TokenReviewAudience              string                           `json:"token_review_audience"`
-	Namespace                        string                           `json:"namespace"`
-	ServiceAccount                   string                           `json:"service_account"`
-	NodeEvidenceTTLSeconds           int64                            `json:"node_evidence_ttl_seconds"`
-	NodeEvidenceRetentionSeconds     int64                            `json:"node_evidence_retention_seconds"`
-	APITimeoutSeconds                int64                            `json:"api_timeout_seconds"`
-	AllowUnboundServiceAccountTokens bool                             `json:"allow_unbound_service_account_tokens"`
-	AllowFakeNodeEvidencePublish     bool                             `json:"allow_fake_node_evidence_publish"`
-	NodeEvidencePublishProviders     []string                         `json:"node_evidence_publish_providers"`
-	NodeEvidenceTPMPolicies          map[string]TPMNodeEvidencePolicy `json:"node_evidence_tpm_policies"`
-	NodeEvidencePublishers           map[string]NodeEvidencePublisher `json:"node_evidence_publishers"`
+	Enabled                          bool     `json:"enabled"`
+	APIServer                        string   `json:"api_server"`
+	CACertFile                       string   `json:"ca_cert_file"`
+	BearerTokenFile                  string   `json:"bearer_token_file"`
+	TokenReviewAudience              string   `json:"token_review_audience"`
+	Namespace                        string   `json:"namespace"`
+	ServiceAccount                   string   `json:"service_account"`
+	NodeEvidenceTTLSeconds           int64    `json:"node_evidence_ttl_seconds"`
+	NodeEvidenceRetentionSeconds     int64    `json:"node_evidence_retention_seconds"`
+	APITimeoutSeconds                int64    `json:"api_timeout_seconds"`
+	AllowUnboundServiceAccountTokens bool     `json:"allow_unbound_service_account_tokens"`
+	AllowFakeNodeEvidencePublish     bool     `json:"allow_fake_node_evidence_publish"`
+	NodeEvidencePublishProviders     []string `json:"node_evidence_publish_providers"`
 }
 
-// TPMNodeEvidencePolicy binds one Kubernetes node identity to an enrolled TPM policy.
-type TPMNodeEvidencePolicy struct {
-	NodeUID string          `json:"node_uid"`
-	Policy  tpmlocal.Policy `json:"policy"`
+const (
+	// ControlPlaneRoleNodeEvidenceAdmin permits node trust enrollment and revocation.
+	ControlPlaneRoleNodeEvidenceAdmin = "node-evidence-admin"
+)
+
+// ControlPlaneConfig maps authenticated mTLS identities to narrow broker roles.
+type ControlPlaneConfig struct {
+	Identities map[string]ControlPlaneIdentity `json:"identities"`
 }
 
-// NodeEvidencePublisher grants one mTLS client certificate permission to publish for named nodes.
-type NodeEvidencePublisher struct {
-	NodeNames []string `json:"node_names"`
+// ControlPlaneIdentity grants roles within explicit cluster scopes.
+type ControlPlaneIdentity struct {
+	Roles      []string `json:"roles"`
+	ClusterIDs []string `json:"cluster_ids"`
 }
 
 // PolicyDocument is the M2 default policy file format.
@@ -104,6 +106,9 @@ func LoadConfig(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("read broker config: %w", err)
 	}
+	if err := rejectDeprecatedNodeTrustConfig(raw); err != nil {
+		return Config{}, err
+	}
 	var config Config
 	if err := json.Unmarshal(raw, &config); err != nil {
 		return Config{}, fmt.Errorf("parse broker config: %w", err)
@@ -113,6 +118,24 @@ func LoadConfig(path string) (Config, error) {
 		return Config{}, err
 	}
 	return config, config.Validate()
+}
+
+func rejectDeprecatedNodeTrustConfig(raw []byte) error {
+	var deprecated struct {
+		Kubernetes struct {
+			TPMPolicies json.RawMessage `json:"node_evidence_tpm_policies"`
+			Publishers  json.RawMessage `json:"node_evidence_publishers"`
+		} `json:"kubernetes"`
+	}
+	if err := json.Unmarshal(raw, &deprecated); err != nil {
+		return fmt.Errorf("parse broker config: %w", err)
+	}
+	if len(deprecated.Kubernetes.TPMPolicies) > 0 || len(deprecated.Kubernetes.Publishers) > 0 {
+		return errors.New(
+			"static node evidence TPM policies and publishers are no longer supported; use authenticated node enrollment",
+		)
+	}
+	return nil
 }
 
 // WithLoadedPolicy loads the optional default policy document.
@@ -163,6 +186,7 @@ func (c Config) Validate() error {
 		c.validateDefaultPolicy,
 		c.validateDevelopment,
 		c.validateChallengeTTL,
+		c.validateControlPlane,
 		c.validateKubernetes,
 	}
 	for _, validate := range validators {
@@ -258,12 +282,79 @@ func (c Config) validateChallengeTTL() error {
 	return nil
 }
 
+func (c Config) validateControlPlane() error {
+	if len(c.ControlPlane.Identities) == 0 {
+		return nil
+	}
+	if c.AllowPlaintextForTests {
+		return errors.New("plaintext transport is not allowed when control_plane.identities is configured")
+	}
+	if !c.RequireClientCert {
+		return errors.New("require_client_cert must be true when control_plane.identities is configured")
+	}
+	for certificateHash, identity := range c.ControlPlane.Identities {
+		if err := validateControlPlaneIdentity(certificateHash, identity); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateControlPlaneIdentity(certificateHash string, identity ControlPlaneIdentity) error {
+	canonical, err := nodeevidence.CanonicalSHA256Digest(certificateHash)
+	if err != nil || canonical != certificateHash {
+		return errors.New(
+			"control_plane.identities contains a non-canonical certificate SHA-256 hash",
+		)
+	}
+	if len(identity.Roles) == 0 {
+		return fmt.Errorf("control-plane identity %q requires roles", certificateHash)
+	}
+	roles := make(map[string]struct{}, len(identity.Roles))
+	for _, role := range identity.Roles {
+		if role != ControlPlaneRoleNodeEvidenceAdmin {
+			return fmt.Errorf("control-plane identity %q has unsupported role %q", certificateHash, role)
+		}
+		if _, ok := roles[role]; ok {
+			return fmt.Errorf("control-plane identity %q contains duplicate role %q", certificateHash, role)
+		}
+		roles[role] = struct{}{}
+	}
+	if len(identity.ClusterIDs) == 0 {
+		return fmt.Errorf("control-plane identity %q requires cluster_ids", certificateHash)
+	}
+	clusters := make(map[string]struct{}, len(identity.ClusterIDs))
+	for _, clusterID := range identity.ClusterIDs {
+		if clusterID != strings.TrimSpace(clusterID) {
+			return fmt.Errorf("control-plane identity %q contains a non-canonical cluster ID", certificateHash)
+		}
+		if err := keyring.ValidateIdentifier(clusterID); err != nil {
+			return fmt.Errorf("control-plane identity %q contains invalid cluster ID: %w", certificateHash, err)
+		}
+		if _, ok := clusters[clusterID]; ok {
+			return fmt.Errorf("control-plane identity %q contains duplicate cluster ID %q", certificateHash, clusterID)
+		}
+		clusters[clusterID] = struct{}{}
+	}
+	return nil
+}
+
+func (c Config) controlPlaneHasRole(role string, clusterID string) bool {
+	for _, identity := range c.ControlPlane.Identities {
+		if slices.Contains(identity.Roles, role) && slices.Contains(identity.ClusterIDs, clusterID) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c Config) validateKubernetes() error {
 	kubernetes := c.Kubernetes
 	if err := validateKubernetesNodeEvidence(
 		kubernetes,
 		c.RequireClientCert,
 		c.AllowPlaintextForTests,
+		c.controlPlaneHasRole(ControlPlaneRoleNodeEvidenceAdmin, c.ClusterID),
 	); err != nil {
 		return err
 	}
@@ -286,28 +377,17 @@ func validateKubernetesNodeEvidence(
 	kubernetes KubernetesConfig,
 	requireClientCert bool,
 	allowPlaintext bool,
+	hasNodeEvidenceAdmin bool,
 ) error {
 	tpmProviderEnabled, err := validateNodeEvidenceProviders(kubernetes.NodeEvidencePublishProviders)
 	if err != nil {
 		return err
 	}
-	if err := validateTPMNodeEvidencePolicies(
+	return validateTPMNodeEvidenceTransport(
 		tpmProviderEnabled,
-		kubernetes.NodeEvidenceTPMPolicies,
-	); err != nil {
-		return err
-	}
-	if err := validateTPMPublisherTransport(
-		tpmProviderEnabled,
-		len(kubernetes.NodeEvidencePublishers) > 0,
 		requireClientCert,
 		allowPlaintext,
-	); err != nil {
-		return err
-	}
-	return validateNodeEvidencePublishers(
-		kubernetes.NodeEvidencePublishers,
-		kubernetes.NodeEvidenceTPMPolicies,
+		hasNodeEvidenceAdmin,
 	)
 }
 
@@ -331,42 +411,11 @@ func validateNodeEvidenceProviders(providers []string) (bool, error) {
 	return tpmProviderEnabled, nil
 }
 
-func validateTPMNodeEvidencePolicies(
+func validateTPMNodeEvidenceTransport(
 	tpmProviderEnabled bool,
-	policies map[string]TPMNodeEvidencePolicy,
-) error {
-	if tpmProviderEnabled && len(policies) == 0 {
-		return errors.New(
-			"kubernetes.node_evidence_tpm_policies is required when generic-tpm2-quote is enabled",
-		)
-	}
-	if !tpmProviderEnabled && len(policies) > 0 {
-		return errors.New(
-			"generic-tpm2-quote must be enabled when kubernetes.node_evidence_tpm_policies is configured",
-		)
-	}
-	for nodeName, enrolled := range policies {
-		if strings.TrimSpace(nodeName) == "" || strings.TrimSpace(nodeName) != nodeName {
-			return errors.New("kubernetes.node_evidence_tpm_policies contains an invalid node name")
-		}
-		if strings.TrimSpace(enrolled.NodeUID) == "" {
-			return fmt.Errorf("kubernetes TPM policy for node %q requires node_uid", nodeName)
-		}
-		if strings.TrimSpace(enrolled.Policy.EnrolledAKPublicHash) == "" {
-			return fmt.Errorf("kubernetes TPM policy for node %q requires enrolled_ak_public_hash", nodeName)
-		}
-		if err := enrolled.Policy.Validate(); err != nil {
-			return fmt.Errorf("invalid kubernetes TPM policy for node %q: %w", nodeName, err)
-		}
-	}
-	return nil
-}
-
-func validateTPMPublisherTransport(
-	tpmProviderEnabled bool,
-	publishersConfigured bool,
 	requireClientCert bool,
 	allowPlaintext bool,
+	hasNodeEvidenceAdmin bool,
 ) error {
 	if tpmProviderEnabled && allowPlaintext {
 		return errors.New("plaintext transport is not allowed when generic-tpm2-quote is enabled")
@@ -374,52 +423,10 @@ func validateTPMPublisherTransport(
 	if tpmProviderEnabled && !requireClientCert {
 		return errors.New("require_client_cert must be true when generic-tpm2-quote is enabled")
 	}
-	if tpmProviderEnabled && !publishersConfigured {
+	if tpmProviderEnabled && !hasNodeEvidenceAdmin {
 		return errors.New(
-			"kubernetes.node_evidence_publishers is required when generic-tpm2-quote is enabled",
+			"a node-evidence-admin control-plane identity is required when generic-tpm2-quote is enabled",
 		)
-	}
-	if !tpmProviderEnabled && publishersConfigured {
-		return errors.New(
-			"generic-tpm2-quote must be enabled when kubernetes.node_evidence_publishers is configured",
-		)
-	}
-	return nil
-}
-
-func validateNodeEvidencePublishers(
-	publishers map[string]NodeEvidencePublisher,
-	policies map[string]TPMNodeEvidencePolicy,
-) error {
-	authorizedNodes := make(map[string]struct{})
-	for certificateHash, publisher := range publishers {
-		canonical, err := canonicalSHA256Digest(certificateHash)
-		if err != nil || canonical != certificateHash {
-			return errors.New(
-				"kubernetes.node_evidence_publishers contains a non-canonical certificate SHA-256 hash",
-			)
-		}
-		if len(publisher.NodeNames) == 0 {
-			return fmt.Errorf("kubernetes node evidence publisher %q requires node_names", certificateHash)
-		}
-		for _, nodeName := range publisher.NodeNames {
-			if strings.TrimSpace(nodeName) == "" || strings.TrimSpace(nodeName) != nodeName {
-				return fmt.Errorf("kubernetes node evidence publisher %q contains an invalid node name", certificateHash)
-			}
-			if _, ok := policies[nodeName]; !ok {
-				return fmt.Errorf(
-					"kubernetes node evidence publisher %q references unenrolled node %q",
-					certificateHash,
-					nodeName,
-				)
-			}
-			authorizedNodes[nodeName] = struct{}{}
-		}
-	}
-	for nodeName := range policies {
-		if _, ok := authorizedNodes[nodeName]; !ok {
-			return fmt.Errorf("kubernetes TPM node %q has no authorized evidence publisher", nodeName)
-		}
 	}
 	return nil
 }
@@ -456,22 +463,6 @@ func normalizedProviderIDs(providers []string) []string {
 	}
 	slices.Sort(normalized)
 	return slices.Compact(normalized)
-}
-
-func cloneTPMNodeEvidencePolicies(
-	policies map[string]TPMNodeEvidencePolicy,
-) map[string]TPMNodeEvidencePolicy {
-	return maps.Clone(policies)
-}
-
-func cloneNodeEvidencePublishers(
-	publishers map[string]NodeEvidencePublisher,
-) map[string]NodeEvidencePublisher {
-	cloned := make(map[string]NodeEvidencePublisher, len(publishers))
-	for certificateHash, publisher := range publishers {
-		cloned[certificateHash] = NodeEvidencePublisher{NodeNames: slices.Clone(publisher.NodeNames)}
-	}
-	return cloned
 }
 
 // ChallengeTTL returns the configured challenge TTL.

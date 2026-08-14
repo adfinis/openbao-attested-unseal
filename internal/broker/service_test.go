@@ -1300,7 +1300,7 @@ func putTestNodeEvidence(
 		ClusterID:    config.ClusterID,
 		NodeName:     testNodeName,
 		NodeUID:      nodeUID,
-		Provider:     "generic-tpm2-quote",
+		Provider:     NodeEvidenceProviderFakeLocal,
 		EvidenceHash: "test-node-evidence-hash",
 		CollectedAt:  collectedAt,
 		ExpiresAt:    expiresAt,

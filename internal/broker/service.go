@@ -586,22 +586,6 @@ func auditIDFromRequest(audit *protocolv1.AuditContext) string {
 	return audit.GetRequestId()
 }
 
-// EnrollmentStub reports M3 enrollment availability.
-type EnrollmentStub struct {
-	protocolv1.UnimplementedEnrollmentServiceServer
-}
-
-// Status reports that brokered enrollment is available through bao-unsealctl.
-func (EnrollmentStub) Status(
-	context.Context,
-	*protocolv1.EnrollmentStatusRequest,
-) (*protocolv1.EnrollmentStatusResponse, error) {
-	return &protocolv1.EnrollmentStatusResponse{
-		Implemented: true,
-		Message:     "brokered enrollment is available through bao-unsealctl",
-	}, nil
-}
-
 // RecoveryStub reports M3 recovery availability.
 type RecoveryStub struct {
 	protocolv1.UnimplementedRecoveryServiceServer

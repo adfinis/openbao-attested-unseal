@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -10,11 +11,15 @@ import (
 	"time"
 
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
+	"github.com/adfinis/openbao-attested-unseal/internal/nodeevidence"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	_ "modernc.org/sqlite"
 )
 
-const maxKeyVersion = int64(^uint32(0))
+const (
+	maxKeyVersion                     = int64(^uint32(0))
+	maxNodeEvidenceEnrollmentRevision = 1<<63 - 1
+)
 
 // SQLiteStore is the first transactional broker state implementation.
 type SQLiteStore struct {
@@ -47,6 +52,29 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 		return fmt.Errorf("migrate sqlite state: %w", err)
 	}
 	if err := s.ensureColumn(ctx, "clusters", "recovery_package_id", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "node_evidence", "enrollment_revision", "INTEGER"); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(
+		ctx,
+		`DELETE FROM node_evidence
+		 WHERE provider = ? AND enrollment_revision IS NULL`,
+		nodeevidence.ProviderTPM2Quote,
+	); err != nil {
+		return fmt.Errorf("invalidate pre-enrollment TPM node evidence: %w", err)
+	}
+	if err := s.ensureColumn(ctx, "audit_events", "target", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "audit_events", "actor", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "audit_events", "correlation_id", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "audit_events", "request_id", "TEXT"); err != nil {
 		return err
 	}
 	return nil
@@ -245,7 +273,11 @@ CREATE TABLE IF NOT EXISTS audit_events (
   reason TEXT NOT NULL,
   evidence_hash TEXT,
   remote_addr TEXT,
-  error_code TEXT
+  error_code TEXT,
+  actor TEXT,
+  target TEXT,
+  correlation_id TEXT,
+  request_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS node_evidence (
@@ -264,6 +296,35 @@ CREATE TABLE IF NOT EXISTS node_evidence (
 CREATE INDEX IF NOT EXISTS node_evidence_expires_at
 ON node_evidence(cluster_id, expires_at);
 
+CREATE TABLE IF NOT EXISTS node_evidence_enrollments (
+  cluster_id TEXT NOT NULL,
+  node_name TEXT NOT NULL,
+  node_uid TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  tpm_policy TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  enrolled_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  revoked_at TEXT,
+  PRIMARY KEY (cluster_id, node_name),
+  FOREIGN KEY (cluster_id) REFERENCES clusters(cluster_id),
+  CHECK (revision > 0)
+);
+
+CREATE TABLE IF NOT EXISTS node_evidence_publishers (
+  cluster_id TEXT NOT NULL,
+  node_name TEXT NOT NULL,
+  certificate_sha256 TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (cluster_id, node_name, certificate_sha256),
+  FOREIGN KEY (cluster_id, node_name)
+    REFERENCES node_evidence_enrollments(cluster_id, node_name)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS node_evidence_publishers_certificate
+ON node_evidence_publishers(certificate_sha256);
+
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
@@ -278,6 +339,9 @@ VALUES (4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
 INSERT OR IGNORE INTO schema_migrations(version, applied_at)
 VALUES (5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+INSERT OR IGNORE INTO schema_migrations(version, applied_at)
+VALUES (6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 }
 
@@ -1028,25 +1092,368 @@ func (s *SQLiteStore) ConsumeChallenge(
 	return nil
 }
 
+// EnrollNodeEvidence creates or replaces broker-owned trust for one node.
+func (s *SQLiteStore) EnrollNodeEvidence(
+	ctx context.Context,
+	request nodeevidence.EnrollmentRequest,
+) (nodeevidence.Enrollment, error) {
+	request, err := nodeevidence.NormalizeEnrollmentRequest(request)
+	if err != nil {
+		return nodeevidence.Enrollment{}, err
+	}
+	policyJSON, err := json.Marshal(request.TPMPolicy)
+	if err != nil {
+		return nodeevidence.Enrollment{}, fmt.Errorf("marshal node evidence enrollment policy: %w", err)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nodeevidence.Enrollment{}, fmt.Errorf("begin node evidence enrollment transaction: %w", err)
+	}
+	defer rollbackUnlessCommitted(tx)
+
+	var currentRevision int64
+	err = tx.QueryRowContext(
+		ctx,
+		`SELECT revision FROM node_evidence_enrollments WHERE cluster_id = ? AND node_name = ?`,
+		request.ClusterID,
+		request.NodeName,
+	).Scan(&currentRevision)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nodeevidence.Enrollment{}, fmt.Errorf("query node evidence enrollment revision: %w", err)
+	}
+	if currentRevision == maxNodeEvidenceEnrollmentRevision {
+		return nodeevidence.Enrollment{}, errors.New("node evidence enrollment revision exhausted")
+	}
+	revision := currentRevision + 1
+	now := request.EnrolledAt.UTC().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO node_evidence_enrollments(
+		   cluster_id, node_name, node_uid, provider, tpm_policy, revision,
+		   enrolled_at, updated_at, revoked_at
+		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+		 ON CONFLICT(cluster_id, node_name) DO UPDATE SET
+		   node_uid = excluded.node_uid,
+		   provider = excluded.provider,
+		   tpm_policy = excluded.tpm_policy,
+		   revision = excluded.revision,
+		   enrolled_at = excluded.enrolled_at,
+		   updated_at = excluded.updated_at,
+		   revoked_at = NULL`,
+		request.ClusterID,
+		request.NodeName,
+		request.NodeUID,
+		request.Provider,
+		string(policyJSON),
+		revision,
+		now,
+		now,
+	); err != nil {
+		return nodeevidence.Enrollment{}, fmt.Errorf("upsert node evidence enrollment: %w", err)
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`DELETE FROM node_evidence_publishers WHERE cluster_id = ? AND node_name = ?`,
+		request.ClusterID,
+		request.NodeName,
+	); err != nil {
+		return nodeevidence.Enrollment{}, fmt.Errorf("replace node evidence publishers: %w", err)
+	}
+	for _, certificateHash := range request.PublisherCertificateHashes {
+		if _, err := tx.ExecContext(
+			ctx,
+			`INSERT INTO node_evidence_publishers(
+			   cluster_id, node_name, certificate_sha256, created_at
+			 ) VALUES (?, ?, ?, ?)`,
+			request.ClusterID,
+			request.NodeName,
+			certificateHash,
+			now,
+		); err != nil {
+			return nodeevidence.Enrollment{}, fmt.Errorf("insert node evidence publisher: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`DELETE FROM node_evidence WHERE cluster_id = ? AND node_name = ?`,
+		request.ClusterID,
+		request.NodeName,
+	); err != nil {
+		return nodeevidence.Enrollment{}, fmt.Errorf("invalidate node evidence after enrollment: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nodeevidence.Enrollment{}, fmt.Errorf("commit node evidence enrollment: %w", err)
+	}
+	revisionNumber := uint64(revision) // #nosec G115 -- SQL revision is positive and below int64 maximum.
+	return nodeevidence.NormalizeEnrollment(nodeevidence.Enrollment{
+		ClusterID:                  request.ClusterID,
+		NodeName:                   request.NodeName,
+		NodeUID:                    request.NodeUID,
+		Provider:                   request.Provider,
+		TPMPolicy:                  request.TPMPolicy,
+		PublisherCertificateHashes: request.PublisherCertificateHashes,
+		Revision:                   revisionNumber,
+		EnrolledAt:                 request.EnrolledAt,
+		UpdatedAt:                  request.EnrolledAt,
+	})
+}
+
+// RevokeNodeEvidence revokes one enrollment and atomically removes verified evidence.
+func (s *SQLiteStore) RevokeNodeEvidence(
+	ctx context.Context,
+	clusterID string,
+	nodeName string,
+	now time.Time,
+) (nodeevidence.Enrollment, error) {
+	clusterID = strings.TrimSpace(clusterID)
+	nodeName = strings.TrimSpace(nodeName)
+	if clusterID == "" || nodeName == "" || now.IsZero() {
+		return nodeevidence.Enrollment{}, fmt.Errorf(
+			"%w: cluster_id, node_name, and revocation time are required",
+			nodeevidence.ErrInvalidEnrollment,
+		)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nodeevidence.Enrollment{}, fmt.Errorf("begin node evidence revocation transaction: %w", err)
+	}
+	defer rollbackUnlessCommitted(tx)
+	enrollment, err := scanNodeEvidenceEnrollment(tx.QueryRowContext(
+		ctx,
+		`SELECT cluster_id, node_name, node_uid, provider, tpm_policy, revision,
+		        enrolled_at, updated_at, revoked_at
+		 FROM node_evidence_enrollments
+		 WHERE cluster_id = ? AND node_name = ?`,
+		clusterID,
+		nodeName,
+	))
+	if err != nil {
+		return nodeevidence.Enrollment{}, err
+	}
+	if !enrollment.Active() {
+		return enrollment, nodeevidence.ErrEnrollmentRevoked
+	}
+	if enrollment.Revision >= maxNodeEvidenceEnrollmentRevision {
+		return nodeevidence.Enrollment{}, errors.New("node evidence enrollment revision exhausted")
+	}
+	revokedAt := now.UTC()
+	enrollment.Revision++
+	enrollment.UpdatedAt = revokedAt
+	enrollment.RevokedAt = revokedAt
+	if _, err := tx.ExecContext(
+		ctx,
+		`UPDATE node_evidence_enrollments
+		 SET revision = ?, updated_at = ?, revoked_at = ?
+		 WHERE cluster_id = ? AND node_name = ? AND revoked_at IS NULL`,
+		enrollment.Revision,
+		revokedAt.Format(time.RFC3339Nano),
+		revokedAt.Format(time.RFC3339Nano),
+		clusterID,
+		nodeName,
+	); err != nil {
+		return nodeevidence.Enrollment{}, fmt.Errorf("revoke node evidence enrollment: %w", err)
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`DELETE FROM node_evidence WHERE cluster_id = ? AND node_name = ?`,
+		clusterID,
+		nodeName,
+	); err != nil {
+		return nodeevidence.Enrollment{}, fmt.Errorf("invalidate revoked node evidence: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nodeevidence.Enrollment{}, fmt.Errorf("commit node evidence revocation: %w", err)
+	}
+	enrollment.PublisherCertificateHashes, err = s.nodeEvidencePublisherHashes(ctx, clusterID, nodeName)
+	if err != nil {
+		return nodeevidence.Enrollment{}, err
+	}
+	return nodeevidence.NormalizeEnrollment(enrollment)
+}
+
+// ActiveNodeEvidenceEnrollment returns active broker-owned trust for one node.
+func (s *SQLiteStore) ActiveNodeEvidenceEnrollment(
+	ctx context.Context,
+	clusterID string,
+	nodeName string,
+) (nodeevidence.Enrollment, error) {
+	clusterID = strings.TrimSpace(clusterID)
+	nodeName = strings.TrimSpace(nodeName)
+	enrollment, err := scanNodeEvidenceEnrollment(s.db.QueryRowContext(
+		ctx,
+		`SELECT cluster_id, node_name, node_uid, provider, tpm_policy, revision,
+		        enrolled_at, updated_at, revoked_at
+		 FROM node_evidence_enrollments
+		 WHERE cluster_id = ? AND node_name = ?`,
+		clusterID,
+		nodeName,
+	))
+	if err != nil {
+		return nodeevidence.Enrollment{}, err
+	}
+	if !enrollment.Active() {
+		return enrollment, nodeevidence.ErrEnrollmentRevoked
+	}
+	enrollment.PublisherCertificateHashes, err = s.nodeEvidencePublisherHashes(ctx, clusterID, nodeName)
+	if err != nil {
+		return nodeevidence.Enrollment{}, err
+	}
+	return nodeevidence.NormalizeEnrollment(enrollment)
+}
+
+// ListNodeEvidenceEnrollments returns node trust records for one cluster.
+func (s *SQLiteStore) ListNodeEvidenceEnrollments(
+	ctx context.Context,
+	clusterID string,
+	nodeName string,
+	includeRevoked bool,
+) ([]nodeevidence.Enrollment, error) {
+	clusterID = strings.TrimSpace(clusterID)
+	nodeName = strings.TrimSpace(nodeName)
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT cluster_id, node_name, node_uid, provider, tpm_policy, revision,
+		        enrolled_at, updated_at, revoked_at
+		 FROM node_evidence_enrollments
+		 WHERE cluster_id = ?
+		   AND (? = '' OR node_name = ?)
+		   AND (? OR revoked_at IS NULL)
+		 ORDER BY node_name`,
+		clusterID,
+		nodeName,
+		nodeName,
+		includeRevoked,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query node evidence enrollments: %w", err)
+	}
+	enrollments := make([]nodeevidence.Enrollment, 0)
+	for rows.Next() {
+		enrollment, scanErr := scanNodeEvidenceEnrollment(rows)
+		if scanErr != nil {
+			_ = rows.Close()
+			return nil, scanErr
+		}
+		enrollments = append(enrollments, enrollment)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, fmt.Errorf("iterate node evidence enrollments: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close node evidence enrollment rows: %w", err)
+	}
+	if len(enrollments) == 0 {
+		return nil, nodeevidence.ErrEnrollmentNotFound
+	}
+	for i := range enrollments {
+		enrollments[i].PublisherCertificateHashes, err = s.nodeEvidencePublisherHashes(
+			ctx,
+			enrollments[i].ClusterID,
+			enrollments[i].NodeName,
+		)
+		if err != nil {
+			return nil, err
+		}
+		enrollments[i], err = nodeevidence.NormalizeEnrollment(enrollments[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return enrollments, nil
+}
+
+// PutEnrolledNodeEvidence stores evidence only for the still-active enrollment revision.
+func (s *SQLiteStore) PutEnrolledNodeEvidence(
+	ctx context.Context,
+	evidence NodeEvidence,
+	revision uint64,
+) error {
+	normalized, err := normalizeNodeEvidence(evidence)
+	if err != nil {
+		return err
+	}
+	if revision == 0 || revision > maxNodeEvidenceEnrollmentRevision {
+		return nodeevidence.ErrEnrollmentChanged
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin enrolled node evidence transaction: %w", err)
+	}
+	defer rollbackUnlessCommitted(tx)
+	var currentRevision int64
+	var nodeUID string
+	var provider string
+	var revokedAt sql.NullString
+	err = tx.QueryRowContext(
+		ctx,
+		`SELECT revision, node_uid, provider, revoked_at
+		 FROM node_evidence_enrollments
+		 WHERE cluster_id = ? AND node_name = ?`,
+		normalized.ClusterID,
+		normalized.NodeName,
+	).Scan(&currentRevision, &nodeUID, &provider, &revokedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nodeevidence.ErrEnrollmentChanged
+	}
+	if err != nil {
+		return fmt.Errorf("query active node evidence enrollment revision: %w", err)
+	}
+	revisionNumber := int64(revision) // #nosec G115 -- revision is bounded by maxNodeEvidenceEnrollmentRevision above.
+	if currentRevision <= 0 || revokedAt.Valid || currentRevision != revisionNumber ||
+		nodeUID != normalized.NodeUID || provider != normalized.Provider {
+		return nodeevidence.ErrEnrollmentChanged
+	}
+	if err := upsertNodeEvidence(ctx, tx, normalized, sql.NullInt64{Int64: currentRevision, Valid: true}); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit enrolled node evidence: %w", err)
+	}
+	return nil
+}
+
 // PutNodeEvidence stores or replaces broker-trusted node evidence.
 func (s *SQLiteStore) PutNodeEvidence(ctx context.Context, evidence NodeEvidence) error {
 	normalized, err := normalizeNodeEvidence(evidence)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(
+	if normalized.Provider == nodeevidence.ProviderTPM2Quote {
+		return fmt.Errorf(
+			"%w: TPM evidence requires an active enrollment revision",
+			nodeevidence.ErrEnrollmentChanged,
+		)
+	}
+	return upsertNodeEvidence(ctx, s.db, normalized, sql.NullInt64{})
+}
+
+type nodeEvidenceExecer interface {
+	//nolint:forbidigo // Mirrors database/sql's variadic adapter boundary.
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func upsertNodeEvidence(
+	ctx context.Context,
+	execer nodeEvidenceExecer,
+	normalized NodeEvidence,
+	enrollmentRevision sql.NullInt64,
+) error {
+	_, err := execer.ExecContext(
 		ctx,
 		`INSERT INTO node_evidence(
-		   cluster_id, node_name, node_uid, provider, evidence_hash, collected_at, expires_at, updated_at
+		   cluster_id, node_name, node_uid, provider, evidence_hash, collected_at, expires_at,
+		   updated_at, enrollment_revision
 		 )
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(cluster_id, node_name) DO UPDATE SET
 		   node_uid = excluded.node_uid,
 		   provider = excluded.provider,
 		   evidence_hash = excluded.evidence_hash,
 		   collected_at = excluded.collected_at,
 		   expires_at = excluded.expires_at,
-		   updated_at = excluded.updated_at`,
+		   updated_at = excluded.updated_at,
+		   enrollment_revision = excluded.enrollment_revision`,
 		normalized.ClusterID,
 		normalized.NodeName,
 		nullableString(normalized.NodeUID),
@@ -1055,11 +1462,44 @@ func (s *SQLiteStore) PutNodeEvidence(ctx context.Context, evidence NodeEvidence
 		normalized.CollectedAt.UTC().Format(time.RFC3339Nano),
 		normalized.ExpiresAt.UTC().Format(time.RFC3339Nano),
 		time.Now().UTC().Format(time.RFC3339Nano),
+		enrollmentRevision,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert node evidence: %w", err)
 	}
 	return nil
+}
+
+func (s *SQLiteStore) nodeEvidencePublisherHashes(
+	ctx context.Context,
+	clusterID string,
+	nodeName string,
+) ([]string, error) {
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT certificate_sha256
+		 FROM node_evidence_publishers
+		 WHERE cluster_id = ? AND node_name = ?
+		 ORDER BY certificate_sha256`,
+		clusterID,
+		nodeName,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query node evidence publishers: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	hashes := make([]string, 0)
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return nil, fmt.Errorf("scan node evidence publisher: %w", err)
+		}
+		hashes = append(hashes, hash)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate node evidence publishers: %w", err)
+	}
+	return hashes, nil
 }
 
 // FreshNodeEvidence returns stored node evidence if it exists and has not expired.
@@ -1227,8 +1667,8 @@ func (s *SQLiteStore) InsertAuditEvent(ctx context.Context, event AuditEvent) er
 	_, err := s.db.ExecContext(
 		ctx,
 		`INSERT INTO audit_events(audit_id, occurred_at, subject_id, operation, cluster_id, key_id, key_version,
-		 decision, policy_id, reason, evidence_hash, remote_addr, error_code)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 decision, policy_id, reason, evidence_hash, remote_addr, error_code, actor, target, correlation_id, request_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		event.AuditID,
 		event.Time,
 		event.Subject,
@@ -1242,6 +1682,10 @@ func (s *SQLiteStore) InsertAuditEvent(ctx context.Context, event AuditEvent) er
 		event.EvidenceHash,
 		event.RemoteAddress,
 		event.ErrorCode,
+		event.Actor,
+		event.Target,
+		event.CorrelationID,
+		event.RequestID,
 	)
 	if err != nil {
 		return fmt.Errorf("insert audit event: %w", err)
@@ -1254,7 +1698,8 @@ func (s *SQLiteStore) AuditEvents(ctx context.Context) ([]AuditEvent, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
 		`SELECT audit_id, occurred_at, subject_id, operation, cluster_id, key_id, key_version,
-		 decision, policy_id, reason, evidence_hash, remote_addr, error_code
+		 decision, policy_id, reason, evidence_hash, remote_addr, error_code, actor, target,
+		 correlation_id, request_id
 		 FROM audit_events
 		 ORDER BY occurred_at, audit_id`,
 	)
@@ -1280,6 +1725,10 @@ func (s *SQLiteStore) AuditEvents(ctx context.Context) ([]AuditEvent, error) {
 			&event.EvidenceHash,
 			&event.RemoteAddress,
 			&event.ErrorCode,
+			&event.Actor,
+			&event.Target,
+			&event.CorrelationID,
+			&event.RequestID,
 		); err != nil {
 			return nil, fmt.Errorf("scan audit event: %w", err)
 		}
@@ -1462,6 +1911,55 @@ func scanRotationOperation(row *sql.Row) (RotationOperation, error) {
 type nodeEvidenceScanner interface {
 	//nolint:forbidigo // Mirrors database/sql's Scan variadic boundary for row and rows helpers.
 	Scan(dest ...any) error
+}
+
+func scanNodeEvidenceEnrollment(scanner nodeEvidenceScanner) (nodeevidence.Enrollment, error) {
+	var enrollment nodeevidence.Enrollment
+	var policyJSON string
+	var revision int64
+	var enrolledRaw string
+	var updatedRaw string
+	var revokedRaw sql.NullString
+	err := scanner.Scan(
+		&enrollment.ClusterID,
+		&enrollment.NodeName,
+		&enrollment.NodeUID,
+		&enrollment.Provider,
+		&policyJSON,
+		&revision,
+		&enrolledRaw,
+		&updatedRaw,
+		&revokedRaw,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nodeevidence.Enrollment{}, nodeevidence.ErrEnrollmentNotFound
+	}
+	if err != nil {
+		return nodeevidence.Enrollment{}, fmt.Errorf("scan node evidence enrollment: %w", err)
+	}
+	if revision <= 0 {
+		return nodeevidence.Enrollment{}, fmt.Errorf("invalid node evidence enrollment revision %d", revision)
+	}
+	enrollment.Revision = uint64(revision) // #nosec G115 -- non-positive revisions are rejected above.
+	if err := json.Unmarshal([]byte(policyJSON), &enrollment.TPMPolicy); err != nil {
+		return nodeevidence.Enrollment{}, fmt.Errorf("decode node evidence enrollment policy: %w", err)
+	}
+	var parseErr error
+	enrollment.EnrolledAt, parseErr = time.Parse(time.RFC3339Nano, enrolledRaw)
+	if parseErr != nil {
+		return nodeevidence.Enrollment{}, fmt.Errorf("parse node evidence enrollment enrolled_at: %w", parseErr)
+	}
+	enrollment.UpdatedAt, parseErr = time.Parse(time.RFC3339Nano, updatedRaw)
+	if parseErr != nil {
+		return nodeevidence.Enrollment{}, fmt.Errorf("parse node evidence enrollment updated_at: %w", parseErr)
+	}
+	if revokedRaw.Valid {
+		enrollment.RevokedAt, parseErr = time.Parse(time.RFC3339Nano, revokedRaw.String)
+		if parseErr != nil {
+			return nodeevidence.Enrollment{}, fmt.Errorf("parse node evidence enrollment revoked_at: %w", parseErr)
+		}
+	}
+	return enrollment, nil
 }
 
 func scanNodeEvidence(scanner nodeEvidenceScanner) (NodeEvidence, error) {

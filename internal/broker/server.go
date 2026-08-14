@@ -131,7 +131,6 @@ func NewGRPCServer(config Config, service *Service, nodeEvidence NodeEvidenceSto
 	}
 	server := grpc.NewServer(options...)
 	protocolv1.RegisterUnsealServiceServer(server, service)
-	protocolv1.RegisterEnrollmentServiceServer(server, EnrollmentStub{})
 	protocolv1.RegisterRecoveryServiceServer(server, RecoveryStub{})
 	var auditStore adminAuditStore
 	var audit *FileAuditSink
@@ -141,6 +140,17 @@ func NewGRPCServer(config Config, service *Service, nodeEvidence NodeEvidenceSto
 		}
 		audit = service.audit
 	}
+	protocolv1.RegisterEnrollmentServiceServer(
+		server,
+		newEnrollmentService(enrollmentServiceConfig{
+			store:      serviceStore(service),
+			auditStore: auditStore,
+			audit:      audit,
+			identities: config.ControlPlane.Identities,
+			clusterID:  config.ClusterID,
+			policyID:   config.Policy(),
+		}),
+	)
 	protocolv1.RegisterAdminServiceServer(
 		server,
 		newAdminService(adminServiceConfig{
@@ -150,8 +160,7 @@ func NewGRPCServer(config Config, service *Service, nodeEvidence NodeEvidenceSto
 			policyID:                     config.Policy(),
 			allowFakeNodeEvidencePublish: config.Kubernetes.AllowFakeNodeEvidencePublish,
 			nodeEvidencePublishProviders: config.Kubernetes.NodeEvidencePublishProviders,
-			nodeEvidenceTPMPolicies:      config.Kubernetes.NodeEvidenceTPMPolicies,
-			nodeEvidencePublishers:       config.Kubernetes.NodeEvidencePublishers,
+			nodeEvidenceEnrollments:      serviceStore(service),
 			challengeTTL:                 config.ChallengeTTL(),
 			nodeEvidenceTTL:              config.Kubernetes.NodeEvidenceTTL(),
 			nodeEvidenceRetention:        config.Kubernetes.NodeEvidenceRetention(),

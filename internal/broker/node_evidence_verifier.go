@@ -20,7 +20,7 @@ var ErrNodeEvidenceVerification = errors.New("node evidence verification failed"
 func verifyNodeEvidenceSubmission(
 	submission nodeevidence.Submission,
 	nonce []byte,
-	tpmPolicies map[string]TPMNodeEvidencePolicy,
+	enrollment nodeevidence.Enrollment,
 ) (nodeevidence.Evidence, error) {
 	if len(submission.Payload) > maxNodeEvidencePayloadSize {
 		return nodeevidence.Evidence{}, fmt.Errorf("%w: payload exceeds maximum size", ErrNodeEvidenceVerification)
@@ -31,7 +31,7 @@ func verifyNodeEvidenceSubmission(
 			return nodeevidence.Evidence{}, err
 		}
 	case nodeevidence.ProviderTPM2Quote:
-		if err := verifyTPMNodeEvidenceSubmission(submission, nonce, tpmPolicies); err != nil {
+		if err := verifyTPMNodeEvidenceSubmission(submission, nonce, enrollment); err != nil {
 			return nodeevidence.Evidence{}, err
 		}
 	default:
@@ -75,17 +75,17 @@ func verifyFakeLocalSubmission(submission nodeevidence.Submission, nonce []byte)
 func verifyTPMNodeEvidenceSubmission(
 	submission nodeevidence.Submission,
 	nonce []byte,
-	policies map[string]TPMNodeEvidencePolicy,
+	enrollment nodeevidence.Enrollment,
 ) error {
 	if submission.Format != tpmlocal.EvidenceFormat {
 		return fmt.Errorf("%w: unsupported TPM evidence format", ErrNodeEvidenceVerification)
 	}
-	enrolled, ok := policies[submission.NodeName]
-	if !ok {
+	if !enrollment.Active() || enrollment.NodeName != submission.NodeName ||
+		enrollment.ClusterID != submission.ClusterID {
 		return fmt.Errorf("%w: node TPM policy is not enrolled", ErrNodeEvidenceVerification)
 	}
 	if subtle.ConstantTimeCompare(
-		[]byte(strings.TrimSpace(enrolled.NodeUID)),
+		[]byte(strings.TrimSpace(enrollment.NodeUID)),
 		[]byte(submission.NodeUID),
 	) != 1 {
 		return fmt.Errorf("%w: node UID does not match enrollment", ErrNodeEvidenceVerification)
@@ -97,7 +97,7 @@ func verifyTPMNodeEvidenceSubmission(
 	if subtle.ConstantTimeCompare([]byte(evidence.ChallengeID), []byte(submission.ChallengeID)) != 1 {
 		return fmt.Errorf("%w: TPM challenge ID mismatch", ErrNodeEvidenceVerification)
 	}
-	if _, err := tpmlocal.EvaluatePolicy(evidence, nonce, enrolled.Policy); err != nil {
+	if _, err := tpmlocal.EvaluatePolicy(evidence, nonce, enrollment.TPMPolicy); err != nil {
 		return fmt.Errorf("%w: TPM policy rejected evidence", ErrNodeEvidenceVerification)
 	}
 	return nil
