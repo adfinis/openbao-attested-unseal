@@ -153,6 +153,10 @@ func (h *tcHarness) startOpenBaoNode(
 		testcontainers.WithEntrypoint("sh", "-lc"),
 		testcontainers.WithCmd("mkdir -p /tmp/openbao/raft && exec bao server -config=/config/openbao.hcl"),
 		testcontainers.WithExposedPorts("8200/tcp", "8201/tcp"),
+		testcontainers.WithTmpfs(map[string]string{
+			"/openbao/file": "rw",
+			"/openbao/logs": "rw",
+		}),
 		testcontainers.WithHostConfigModifier(func(hostConfig *container.HostConfig) {
 			hostConfig.CapAdd = append(hostConfig.CapAdd, "IPC_LOCK")
 		}),

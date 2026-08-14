@@ -99,7 +99,7 @@ func TestLocalTPMAutoUnsealWithOpenBao(t *testing.T) {
 	keep := os.Getenv("OPENBAO_E2E_KEEP") == "1"
 	if !keep {
 		t.Cleanup(func() {
-			dockerIgnore(t, "rm", "-f", baoName, swtpmName)
+			dockerIgnore(t, "rm", "-f", "-v", baoName, swtpmName)
 			dockerIgnore(t, "volume", "rm", tpmVolume, stateVolume, baoVolume, traceVolume)
 		})
 		t.Cleanup(func() { _ = os.RemoveAll(workDir) })
@@ -206,7 +206,7 @@ func TestLocalTPMAutoUnsealWithOpenBao(t *testing.T) {
 	assertLastTraceKeyID(t, afterRotateEvents, "encrypt", "prod-eu1/root/v1")
 	decryptCountBeforeRestart := countTraceOperation(afterRotateEvents, "decrypt")
 
-	docker(t, false, "rm", "-f", baoName)
+	docker(t, false, "rm", "-f", "-v", baoName)
 	startOpenBao(t, openbaoImage, baoName, tpmVolume, stateVolume, baoVolume, traceVolume, pluginDir, configDir)
 	afterRestart := waitForStatus(t, baoName, true, false, 90*time.Second)
 	assertStatus(t, afterRestart, true, false)
