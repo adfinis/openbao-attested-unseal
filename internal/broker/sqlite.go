@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/adfinis/openbao-attested-unseal/internal/keyprotection"
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 	"github.com/adfinis/openbao-attested-unseal/internal/nodeevidence"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
@@ -26,7 +27,7 @@ type SQLiteStore struct {
 	db *sql.DB
 }
 
-// OpenSQLiteStore opens and migrates broker state.
+// OpenSQLiteStore opens broker state and initializes the current schema.
 func OpenSQLiteStore(ctx context.Context, path string) (*SQLiteStore, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -34,7 +35,7 @@ func OpenSQLiteStore(ctx context.Context, path string) (*SQLiteStore, error) {
 	}
 	db.SetMaxOpenConns(1)
 	store := &SQLiteStore{db: db}
-	if err := store.Migrate(ctx); err != nil {
+	if err := store.InitializeSchema(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -46,65 +47,11 @@ func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }
 
-// Migrate applies idempotent schema migrations.
-func (s *SQLiteStore) Migrate(ctx context.Context) error {
+// InitializeSchema creates the current pre-release schema.
+// Preview databases from earlier revisions are intentionally unsupported.
+func (s *SQLiteStore) InitializeSchema(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, SchemaSQL()); err != nil {
-		return fmt.Errorf("migrate sqlite state: %w", err)
-	}
-	if err := s.ensureColumn(ctx, "clusters", "recovery_package_id", "TEXT"); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "node_evidence", "enrollment_revision", "INTEGER"); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(
-		ctx,
-		`DELETE FROM node_evidence
-		 WHERE provider = ? AND enrollment_revision IS NULL`,
-		nodeevidence.ProviderTPM2Quote,
-	); err != nil {
-		return fmt.Errorf("invalidate pre-enrollment TPM node evidence: %w", err)
-	}
-	if err := s.ensureColumn(ctx, "audit_events", "target", "TEXT"); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "audit_events", "actor", "TEXT"); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "audit_events", "correlation_id", "TEXT"); err != nil {
-		return err
-	}
-	if err := s.ensureColumn(ctx, "audit_events", "request_id", "TEXT"); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *SQLiteStore) ensureColumn(ctx context.Context, table string, column string, definition string) error {
-	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info("+table+")")
-	if err != nil {
-		return fmt.Errorf("inspect sqlite table %s: %w", table, err)
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var cid int
-		var name string
-		var columnType string
-		var notNull int
-		var defaultValue sql.NullString
-		var primaryKey int
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
-			return fmt.Errorf("scan sqlite table %s columns: %w", table, err)
-		}
-		if name == column {
-			return nil
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate sqlite table %s columns: %w", table, err)
-	}
-	if _, err := s.db.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+column+" "+definition); err != nil {
-		return fmt.Errorf("add sqlite column %s.%s: %w", table, column, err)
+		return fmt.Errorf("initialize sqlite state: %w", err)
 	}
 	return nil
 }
@@ -113,11 +60,6 @@ func (s *SQLiteStore) ensureColumn(ctx context.Context, table string, column str
 func SchemaSQL() string {
 	return `
 PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS schema_migrations (
-  version INTEGER PRIMARY KEY,
-  applied_at TEXT NOT NULL
-);
 
 CREATE TABLE IF NOT EXISTS clusters (
   cluster_id TEXT PRIMARY KEY,
@@ -141,7 +83,9 @@ CREATE TABLE IF NOT EXISTS key_versions (
   status TEXT NOT NULL,
   algorithm TEXT NOT NULL,
   policy_id TEXT NOT NULL,
-  material BLOB NOT NULL,
+  protector_profile TEXT NOT NULL,
+  protected_format TEXT NOT NULL,
+  protected_payload BLOB NOT NULL,
   created_at TEXT NOT NULL,
   PRIMARY KEY (cluster_id, key_id, version),
   FOREIGN KEY (cluster_id, key_id) REFERENCES keyrings(cluster_id, key_id),
@@ -289,6 +233,7 @@ CREATE TABLE IF NOT EXISTS node_evidence (
   collected_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  enrollment_revision INTEGER,
   PRIMARY KEY (cluster_id, node_name),
   FOREIGN KEY (cluster_id) REFERENCES clusters(cluster_id)
 );
@@ -325,28 +270,17 @@ CREATE TABLE IF NOT EXISTS node_evidence_publishers (
 CREATE INDEX IF NOT EXISTS node_evidence_publishers_certificate
 ON node_evidence_publishers(certificate_sha256);
 
-INSERT OR IGNORE INTO schema_migrations(version, applied_at)
-VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
-
-INSERT OR IGNORE INTO schema_migrations(version, applied_at)
-VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
-
-INSERT OR IGNORE INTO schema_migrations(version, applied_at)
-VALUES (3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
-
-INSERT OR IGNORE INTO schema_migrations(version, applied_at)
-VALUES (4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
-
-INSERT OR IGNORE INTO schema_migrations(version, applied_at)
-VALUES (5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
-
-INSERT OR IGNORE INTO schema_migrations(version, applied_at)
-VALUES (6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 `
 }
 
 // BootstrapKeyring seeds a fresh broker keyring and optional recovery metadata.
 func (s *SQLiteStore) BootstrapKeyring(ctx context.Context, request BootstrapKeyringRequest) error {
+	if err := request.Key.Validate(); err != nil {
+		return err
+	}
+	if request.Key.Status != keyring.StatusActive || request.Key.Ref.Version != 1 {
+		return errors.New("bootstrap key must be active version 1")
+	}
 	now := request.CreatedAt.UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -357,7 +291,7 @@ func (s *SQLiteStore) BootstrapKeyring(ctx context.Context, request BootstrapKey
 	if _, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO clusters(cluster_id, recovery_package_id, created_at) VALUES (?, ?, ?)`,
-		request.ClusterID,
+		request.Key.Ref.ClusterID,
 		nullableString(request.RecoveryPackageID),
 		now,
 	); err != nil {
@@ -366,23 +300,27 @@ func (s *SQLiteStore) BootstrapKeyring(ctx context.Context, request BootstrapKey
 	if _, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO keyrings(cluster_id, key_id, profile, created_at) VALUES (?, ?, ?, ?)`,
-		request.ClusterID,
-		request.KeyID,
-		request.Profile,
+		request.Key.Ref.ClusterID,
+		request.Key.Ref.KeyID,
+		request.Key.ProtectorProfile,
 		now,
 	); err != nil {
 		return fmt.Errorf("insert keyring: %w", err)
 	}
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO key_versions(cluster_id, key_id, version, status, algorithm, policy_id, material, created_at)
-		 VALUES (?, ?, 1, ?, ?, ?, ?, ?)`,
-		request.ClusterID,
-		request.KeyID,
-		string(keyring.StatusActive),
-		string(keyring.AlgorithmAES256GCM),
-		request.PolicyID,
-		request.Material,
+		`INSERT INTO key_versions(cluster_id, key_id, version, status, algorithm, policy_id,
+		   protector_profile, protected_format, protected_payload, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		request.Key.Ref.ClusterID,
+		request.Key.Ref.KeyID,
+		request.Key.Ref.Version,
+		string(request.Key.Status),
+		string(request.Key.Algorithm),
+		request.Key.PolicyID,
+		request.Key.ProtectorProfile,
+		request.Key.Format,
+		request.Key.Payload,
 		now,
 	); err != nil {
 		return fmt.Errorf("insert key version: %w", err)
@@ -390,8 +328,8 @@ func (s *SQLiteStore) BootstrapKeyring(ctx context.Context, request BootstrapKey
 	if _, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO policies(cluster_id, policy_id, body, created_at) VALUES (?, ?, ?, ?)`,
-		request.ClusterID,
-		request.PolicyID,
+		request.Key.Ref.ClusterID,
+		request.Key.PolicyID,
 		"default-deny-with-enrolled-subjects",
 		now,
 	); err != nil {
@@ -404,8 +342,8 @@ func (s *SQLiteStore) BootstrapKeyring(ctx context.Context, request BootstrapKey
 			 checksum, body, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			request.RecoveryPackageID,
-			request.ClusterID,
-			request.KeyID,
+			request.Key.Ref.ClusterID,
+			request.Key.Ref.KeyID,
 			request.RecoveryThreshold,
 			request.RecoveryShares,
 			request.RecoveryChecksum,
@@ -422,7 +360,14 @@ func (s *SQLiteStore) BootstrapKeyring(ctx context.Context, request BootstrapKey
 }
 
 // ConfigureDevelopment seeds the explicit development subject and keyring.
-func (s *SQLiteStore) ConfigureDevelopment(ctx context.Context, config Config, material []byte) error {
+func (s *SQLiteStore) ConfigureDevelopment(
+	ctx context.Context,
+	config Config,
+	key keyprotection.ProtectedKey,
+) error {
+	if err := validateDevelopmentProtectedKey(config, key); err != nil {
+		return err
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -450,14 +395,18 @@ func (s *SQLiteStore) ConfigureDevelopment(ctx context.Context, config Config, m
 	}
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT OR IGNORE INTO key_versions(cluster_id, key_id, version, status, algorithm, policy_id, material, created_at)
-		 VALUES (?, ?, 1, ?, ?, ?, ?, ?)`,
+		`INSERT OR IGNORE INTO key_versions(cluster_id, key_id, version, status, algorithm, policy_id,
+		   protector_profile, protected_format, protected_payload, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		config.ClusterID,
 		config.KeyID,
-		string(keyring.StatusActive),
-		string(keyring.AlgorithmAES256GCM),
-		config.Policy(),
-		material,
+		key.Ref.Version,
+		string(key.Status),
+		string(key.Algorithm),
+		key.PolicyID,
+		key.ProtectorProfile,
+		key.Format,
+		key.Payload,
 		now,
 	); err != nil {
 		return fmt.Errorf("insert key version: %w", err)
@@ -489,11 +438,27 @@ func (s *SQLiteStore) ConfigureDevelopment(ctx context.Context, config Config, m
 	return nil
 }
 
-// LoadKeyring loads all key versions for one cluster.
-func (s *SQLiteStore) LoadKeyring(ctx context.Context, clusterID string) (*keyring.Ring, error) {
+func validateDevelopmentProtectedKey(config Config, key keyprotection.ProtectedKey) error {
+	if err := key.Validate(); err != nil {
+		return err
+	}
+	if key.Ref.ClusterID != config.ClusterID || key.Ref.KeyID != config.KeyID ||
+		key.Ref.Version != 1 || key.Status != keyring.StatusActive ||
+		key.PolicyID != config.Policy() || key.ProtectorProfile != config.Profile() {
+		return errors.New("development protected key does not match broker configuration")
+	}
+	return nil
+}
+
+// ProtectedKeys loads durable protected key records for one cluster.
+func (s *SQLiteStore) ProtectedKeys(
+	ctx context.Context,
+	clusterID string,
+) ([]keyprotection.ProtectedKey, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
-		`SELECT key_id, version, status, algorithm, policy_id, material
+		`SELECT key_id, version, status, algorithm, policy_id,
+		        protector_profile, protected_format, protected_payload
 		 FROM key_versions
 		 WHERE cluster_id = ?
 		 ORDER BY key_id, version`,
@@ -504,53 +469,74 @@ func (s *SQLiteStore) LoadKeyring(ctx context.Context, clusterID string) (*keyri
 	}
 	defer func() { _ = rows.Close() }()
 
-	versions := make([]keyring.KeyVersion, 0)
+	records := make([]keyprotection.ProtectedKey, 0)
 	for rows.Next() {
-		var version keyring.KeyVersion
+		var record keyprotection.ProtectedKey
 		var versionNumber int64
 		if err := rows.Scan(
-			&version.Ref.KeyID,
+			&record.Ref.KeyID,
 			&versionNumber,
-			&version.Status,
-			&version.Algorithm,
-			&version.PolicyID,
-			&version.Material,
+			&record.Status,
+			&record.Algorithm,
+			&record.PolicyID,
+			&record.ProtectorProfile,
+			&record.Format,
+			&record.Payload,
 		); err != nil {
 			return nil, fmt.Errorf("scan key version: %w", err)
 		}
-		version.Ref.ClusterID = clusterID
-		if versionNumber < 0 || versionNumber > maxKeyVersion {
+		record.Ref.ClusterID = clusterID
+		if versionNumber <= 0 || versionNumber > maxKeyVersion {
 			return nil, fmt.Errorf("key version exceeds uint32: %d", versionNumber)
 		}
-		version.Ref.Version = uint32(versionNumber)
-		versions = append(versions, version)
+		record.Ref.Version = uint32(versionNumber)
+		if err := record.Validate(); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate key versions: %w", err)
 	}
-	return keyring.NewRing(versions...)
+	if len(records) == 0 {
+		return nil, keyring.ErrKeyNotFound
+	}
+	return records, nil
 }
 
-// KeyVersion loads one key version.
-func (s *SQLiteStore) KeyVersion(ctx context.Context, ref keyring.KeyRef) (keyring.KeyVersion, error) {
-	var version keyring.KeyVersion
+// ProtectedKey loads one durable protected key record.
+func (s *SQLiteStore) ProtectedKey(
+	ctx context.Context,
+	ref keyring.KeyRef,
+) (keyprotection.ProtectedKey, error) {
+	var record keyprotection.ProtectedKey
 	err := s.db.QueryRowContext(
 		ctx,
-		`SELECT status, algorithm, policy_id, material
+		`SELECT status, algorithm, policy_id, protector_profile, protected_format, protected_payload
 		 FROM key_versions
 		 WHERE cluster_id = ? AND key_id = ? AND version = ?`,
 		ref.ClusterID,
 		ref.KeyID,
 		ref.Version,
-	).Scan(&version.Status, &version.Algorithm, &version.PolicyID, &version.Material)
+	).Scan(
+		&record.Status,
+		&record.Algorithm,
+		&record.PolicyID,
+		&record.ProtectorProfile,
+		&record.Format,
+		&record.Payload,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return keyring.KeyVersion{}, keyring.ErrKeyNotFound
+		return keyprotection.ProtectedKey{}, keyring.ErrKeyNotFound
 	}
 	if err != nil {
-		return keyring.KeyVersion{}, fmt.Errorf("query key version: %w", err)
+		return keyprotection.ProtectedKey{}, fmt.Errorf("query key version: %w", err)
 	}
-	version.Ref = ref
-	return version, nil
+	record.Ref = ref
+	if err := record.Validate(); err != nil {
+		return keyprotection.ProtectedKey{}, err
+	}
+	return record, nil
 }
 
 // Subject loads one subject.
@@ -716,6 +702,28 @@ func (s *SQLiteStore) ConsumeEnrollmentGrant(ctx context.Context, grantID string
 	return nil
 }
 
+// NextRotationKeyRef returns the reference a new pending key must use.
+func (s *SQLiteStore) NextRotationKeyRef(
+	ctx context.Context,
+	clusterID string,
+	keyID string,
+) (keyring.KeyRef, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return keyring.KeyRef{}, fmt.Errorf("begin next rotation key transaction: %w", err)
+	}
+	defer rollbackUnlessCommitted(tx)
+
+	_, version, err := nextRotationVersions(ctx, tx, clusterID, keyID)
+	if err != nil {
+		return keyring.KeyRef{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return keyring.KeyRef{}, fmt.Errorf("commit next rotation key transaction: %w", err)
+	}
+	return keyring.KeyRef{ClusterID: clusterID, KeyID: keyID, Version: version}, nil
+}
+
 // StartRotation creates a pending key version and durable rotation operation.
 func (s *SQLiteStore) StartRotation(
 	ctx context.Context,
@@ -734,32 +742,44 @@ func (s *SQLiteStore) StartRotation(
 	}
 	defer rollbackUnlessCommitted(tx)
 
-	if err := ensureNoStartedRotation(ctx, tx, request.ClusterID, request.KeyID); err != nil {
+	ref := request.Key.Ref
+	if err := ensureNoStartedRotation(ctx, tx, ref.ClusterID, ref.KeyID); err != nil {
 		return RotationOperation{}, err
 	}
-	fromVersion, toVersion, err := nextRotationVersions(ctx, tx, request.ClusterID, request.KeyID)
+	fromVersion, toVersion, err := nextRotationVersions(ctx, tx, ref.ClusterID, ref.KeyID)
 	if err != nil {
 		return RotationOperation{}, err
 	}
+	if ref.Version != toVersion {
+		return RotationOperation{}, fmt.Errorf(
+			"%w: pending key version %d does not match next version %d",
+			ErrRotationInvalidTransition,
+			ref.Version,
+			toVersion,
+		)
+	}
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO key_versions(cluster_id, key_id, version, status, algorithm, policy_id, material, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		request.ClusterID,
-		request.KeyID,
+		`INSERT INTO key_versions(cluster_id, key_id, version, status, algorithm, policy_id,
+		   protector_profile, protected_format, protected_payload, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ref.ClusterID,
+		ref.KeyID,
 		toVersion,
-		string(keyring.StatusPending),
-		string(keyring.AlgorithmAES256GCM),
-		request.PolicyID,
-		request.Material,
+		string(request.Key.Status),
+		string(request.Key.Algorithm),
+		request.Key.PolicyID,
+		request.Key.ProtectorProfile,
+		request.Key.Format,
+		request.Key.Payload,
 		now.Format(time.RFC3339Nano),
 	); err != nil {
 		return RotationOperation{}, fmt.Errorf("insert pending key version: %w", err)
 	}
 	operation := RotationOperation{
 		OperationID: request.OperationID,
-		ClusterID:   request.ClusterID,
-		KeyID:       request.KeyID,
+		ClusterID:   ref.ClusterID,
+		KeyID:       ref.KeyID,
 		FromVersion: fromVersion,
 		ToVersion:   toVersion,
 		Status:      RotationStatusStarted,

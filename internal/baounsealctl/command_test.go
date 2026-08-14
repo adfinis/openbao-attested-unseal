@@ -53,14 +53,14 @@ func TestInitAndStatusJSON(t *testing.T) {
 		"-recovery-package", recoveryPath,
 		"-cluster-id", "prod-eu1",
 		"-key-id", "root",
-		"-keyring-profile", "recovery-threshold",
+		"-keyring-profile", broker.DevelopmentProfile,
 		"-format", "json",
 	)
 	if initOut.AuditID == "" {
 		t.Fatal("init audit ID is empty")
 	}
-	if initOut.KeyringProfile != "recovery-threshold" {
-		t.Fatalf("keyring profile = %q, want recovery-threshold", initOut.KeyringProfile)
+	if initOut.KeyringProfile != broker.DevelopmentProfile {
+		t.Fatalf("keyring profile = %q, want %s", initOut.KeyringProfile, broker.DevelopmentProfile)
 	}
 	if len(initOut.RecoveryShares) != 5 {
 		t.Fatalf("recovery shares = %d, want 5", len(initOut.RecoveryShares))
@@ -1258,7 +1258,7 @@ func startAdminBrokerTestServer(t *testing.T) (string, *broker.MemoryNodeEvidenc
 		},
 	}
 	cache := broker.NewMemoryNodeEvidenceCache()
-	service := broker.NewService(config, nil, nil, nil)
+	service := broker.NewService(config, nil, nil, nil, nil)
 	server, err := broker.NewGRPCServer(config, service, cache)
 	if err != nil {
 		t.Fatalf("NewGRPCServer returned error: %v", err)
@@ -1301,7 +1301,17 @@ func startAdminBrokerDiagnosticTestServer(t *testing.T, verifier broker.Evidence
 		t.Fatalf("OpenSQLiteStore returned error: %v", err)
 	}
 	material := bytes.Repeat([]byte{1}, keyring.KeySize)
-	if err := store.ConfigureDevelopment(context.Background(), config, material); err != nil {
+	protectedKey, err := protectDevelopmentKey(
+		context.Background(),
+		keyring.KeyRef{ClusterID: config.ClusterID, KeyID: config.KeyID, Version: 1},
+		keyring.StatusActive,
+		config.Policy(),
+		material,
+	)
+	if err != nil {
+		t.Fatalf("Protect returned error: %v", err)
+	}
+	if err := store.ConfigureDevelopment(context.Background(), config, protectedKey); err != nil {
 		t.Fatalf("ConfigureDevelopment returned error: %v", err)
 	}
 	now := time.Now().UTC()
@@ -1316,7 +1326,15 @@ func startAdminBrokerDiagnosticTestServer(t *testing.T, verifier broker.Evidence
 	}); err != nil {
 		t.Fatalf("PutNodeEvidence returned error: %v", err)
 	}
-	service := broker.NewServiceWithEvidenceVerifierAndNodeEvidence(config, store, nil, nil, verifier, store)
+	service := broker.NewServiceWithEvidenceVerifierAndNodeEvidence(
+		config,
+		store,
+		developmentKeyringLoader(store),
+		nil,
+		nil,
+		verifier,
+		store,
+	)
 	server, err := broker.NewGRPCServer(config, service, store)
 	if err != nil {
 		t.Fatalf("NewGRPCServer returned error: %v", err)
@@ -1516,7 +1534,7 @@ func assertCLIKeyStatus(
 	status keyring.Status,
 ) {
 	t.Helper()
-	got, err := store.KeyVersion(context.Background(), keyring.KeyRef{
+	got, err := store.ProtectedKey(context.Background(), keyring.KeyRef{
 		ClusterID: clusterID,
 		KeyID:     keyID,
 		Version:   keyVersion,

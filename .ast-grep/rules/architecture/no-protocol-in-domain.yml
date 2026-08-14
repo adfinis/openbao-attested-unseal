@@ -7,6 +7,7 @@ language: Go
 files:
   - internal/nodeevidence/**/*.go
   - internal/keyring/**/*.go
+  - internal/keyprotection/**/*.go
   - internal/tpm/**/*.go
   - internal/enrollment/**/*.go
   - internal/recovery/**/*.go

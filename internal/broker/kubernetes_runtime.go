@@ -11,6 +11,7 @@ import (
 
 	k8sprovider "github.com/adfinis/openbao-attested-unseal/internal/attestation/providers/kubernetes"
 	runtimeconfig "github.com/adfinis/openbao-attested-unseal/internal/config"
+	"github.com/adfinis/openbao-attested-unseal/internal/keyprotection"
 )
 
 type runtimeServiceDependencies struct {
@@ -24,9 +25,13 @@ func newRuntimeService(
 	audit *FileAuditSink,
 	telemetry *Telemetry,
 ) (runtimeServiceDependencies, error) {
+	keyrings := keyprotection.Loader{
+		Repository: store,
+		Protector:  keyprotection.DevelopmentProtector{},
+	}
 	if !config.Kubernetes.Enabled {
 		return runtimeServiceDependencies{
-			Service: NewService(config, store, audit, telemetry),
+			Service: NewService(config, store, keyrings, audit, telemetry),
 		}, nil
 	}
 	kubernetesDeps, err := newKubernetesRuntimeDependencies(config.Kubernetes)
@@ -36,6 +41,7 @@ func newRuntimeService(
 	service := NewServiceWithEvidenceVerifierAndNodeEvidence(
 		config,
 		store,
+		keyrings,
 		audit,
 		telemetry,
 		kubernetesDeps.verifier,

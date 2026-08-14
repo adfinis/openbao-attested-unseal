@@ -41,7 +41,7 @@ func TestRotationStartRejectsSecondStartedOperation(t *testing.T) {
 	config := testConfig(t)
 	store := newTestStore(t, config)
 	startTestRotation(t, store, config, "rot_first", 2)
-	request := testRotationStartRequest(config, "rot_second", 3)
+	request := testRotationStartRequest(t, config, "rot_second", 3)
 	if _, err := store.StartRotation(context.Background(), request); !errors.Is(err, ErrRotationInProgress) {
 		t.Fatalf("second StartRotation error = %v, want ErrRotationInProgress", err)
 	}
@@ -114,7 +114,7 @@ func TestRotationVerificationRejectsUnknownOperation(t *testing.T) {
 
 func assertKeyStatus(t *testing.T, store *SQLiteStore, config Config, version uint32, status keyring.Status) {
 	t.Helper()
-	got, err := store.KeyVersion(context.Background(), keyring.KeyRef{
+	got, err := store.ProtectedKey(context.Background(), keyring.KeyRef{
 		ClusterID: config.ClusterID,
 		KeyID:     config.KeyID,
 		Version:   version,
@@ -129,7 +129,7 @@ func assertKeyStatus(t *testing.T, store *SQLiteStore, config Config, version ui
 
 func encryptOldRotationBlob(t *testing.T, store *SQLiteStore, config Config) *wrapping.BlobInfo {
 	t.Helper()
-	oldRing, err := store.LoadKeyring(context.Background(), config.ClusterID)
+	oldRing, err := testDevelopmentLoader(store).LoadKeyring(context.Background(), config.ClusterID)
 	if err != nil {
 		t.Fatalf("LoadKeyring returned error: %v", err)
 	}
@@ -150,7 +150,7 @@ func startTestRotation(
 	t.Helper()
 	operation, err := store.StartRotation(
 		context.Background(),
-		testRotationStartRequest(config, operationID, materialSeed),
+		testRotationStartRequest(t, config, operationID, materialSeed),
 	)
 	if err != nil {
 		t.Fatalf("StartRotation returned error: %v", err)
@@ -158,14 +158,18 @@ func startTestRotation(
 	return operation
 }
 
-func testRotationStartRequest(config Config, operationID string, materialSeed byte) RotationStartRequest {
+func testRotationStartRequest(t *testing.T, config Config, operationID string, materialSeed byte) RotationStartRequest {
+	t.Helper()
 	return RotationStartRequest{
 		OperationID: operationID,
-		ClusterID:   config.ClusterID,
-		KeyID:       config.KeyID,
-		PolicyID:    config.Policy(),
-		Material:    bytes.Repeat([]byte{materialSeed}, keyring.KeySize),
-		CreatedAt:   time.Now(),
+		Key: protectTestKey(
+			t,
+			config,
+			keyring.KeyRef{ClusterID: config.ClusterID, KeyID: config.KeyID, Version: 2},
+			keyring.StatusPending,
+			bytes.Repeat([]byte{materialSeed}, keyring.KeySize),
+		),
+		CreatedAt: time.Now(),
 	}
 }
 
@@ -185,7 +189,7 @@ func assertActivatedRotationDecryptsOldBlob(
 	oldBlob *wrapping.BlobInfo,
 ) {
 	t.Helper()
-	newRing, err := store.LoadKeyring(context.Background(), config.ClusterID)
+	newRing, err := testDevelopmentLoader(store).LoadKeyring(context.Background(), config.ClusterID)
 	if err != nil {
 		t.Fatalf("LoadKeyring after activation returned error: %v", err)
 	}

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/adfinis/openbao-attested-unseal/internal/keyprotection"
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 	"github.com/adfinis/openbao-attested-unseal/internal/nodeevidence"
 )
@@ -25,7 +26,7 @@ const (
 	// DefaultKubernetesAPITimeout is used when Kubernetes config omits api_timeout_seconds.
 	DefaultKubernetesAPITimeout = 10 * time.Second
 	// DevelopmentProfile is the only keyring profile implemented by the M2 skeleton.
-	DevelopmentProfile = "development"
+	DevelopmentProfile = keyprotection.ProfileDevelopment
 	// OTelExporterNone disables SDK exporter setup while preserving instrumentation hooks.
 	OTelExporterNone = "none"
 	// OTelExporterStdout emits traces and metrics as JSON to stdout.

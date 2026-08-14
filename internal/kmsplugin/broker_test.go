@@ -15,6 +15,7 @@ import (
 
 	k8sprovider "github.com/adfinis/openbao-attested-unseal/internal/attestation/providers/kubernetes"
 	brokerpkg "github.com/adfinis/openbao-attested-unseal/internal/broker"
+	"github.com/adfinis/openbao-attested-unseal/internal/keyprotection"
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 )
@@ -246,12 +247,30 @@ func startBrokerRuntimeForPlugin(t *testing.T, runtime *brokerpkg.Runtime) net.L
 
 func rotateBrokerKeyringForPlugin(t *testing.T, runtime *brokerpkg.Runtime) {
 	t.Helper()
+	ref, err := runtime.Store.NextRotationKeyRef(
+		context.Background(),
+		runtime.Config.ClusterID,
+		runtime.Config.KeyID,
+	)
+	if err != nil {
+		t.Fatalf("NextRotationKeyRef returned error: %v", err)
+	}
+	protectedKey, err := (keyprotection.DevelopmentProtector{}).Protect(
+		context.Background(),
+		keyring.KeyVersion{
+			Ref:       ref,
+			Status:    keyring.StatusPending,
+			Algorithm: keyring.AlgorithmAES256GCM,
+			PolicyID:  runtime.Config.Policy(),
+			Material:  bytes.Repeat([]byte{2}, keyring.KeySize),
+		},
+	)
+	if err != nil {
+		t.Fatalf("Protect returned error: %v", err)
+	}
 	operation, err := runtime.Store.StartRotation(context.Background(), brokerpkg.RotationStartRequest{
 		OperationID: "rot_plugin_test",
-		ClusterID:   runtime.Config.ClusterID,
-		KeyID:       runtime.Config.KeyID,
-		PolicyID:    runtime.Config.Policy(),
-		Material:    bytes.Repeat([]byte{2}, keyring.KeySize),
+		Key:         protectedKey,
 		CreatedAt:   time.Now(),
 	})
 	if err != nil {

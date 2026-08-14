@@ -119,7 +119,8 @@ type KeyVersion struct {
 	Material  []byte
 }
 
-func (v KeyVersion) validate() error {
+// Validate checks key metadata and unlocked material.
+func (v KeyVersion) Validate() error {
 	if err := v.Ref.Validate(); err != nil {
 		return err
 	}
@@ -138,6 +139,10 @@ func (v KeyVersion) validate() error {
 		return fmt.Errorf("%w: key material must be %d bytes", ErrInvalidMetadata, KeySize)
 	}
 	return nil
+}
+
+func (v KeyVersion) validate() error {
+	return v.Validate()
 }
 
 func (v KeyVersion) clone() KeyVersion {

@@ -2,9 +2,11 @@ package broker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/adfinis/openbao-attested-unseal/internal/keyprotection"
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	wrapping "github.com/openbao/go-kms-wrapping/v2"
@@ -15,6 +17,7 @@ import (
 type Service struct {
 	protocolv1.UnimplementedUnsealServiceServer
 	store     Store
+	keyrings  keyprotection.KeyringProvider
 	audit     *FileAuditSink
 	policy    *PolicyEngine
 	telemetry *Telemetry
@@ -23,10 +26,17 @@ type Service struct {
 	clock     func() time.Time
 }
 
-// NewService creates the gRPC service implementation.
-func NewService(config Config, store Store, audit *FileAuditSink, telemetry *Telemetry) *Service {
+// NewService creates the gRPC service with an injected unlocked-keyring capability.
+func NewService(
+	config Config,
+	store Store,
+	keyrings keyprotection.KeyringProvider,
+	audit *FileAuditSink,
+	telemetry *Telemetry,
+) *Service {
 	return &Service{
 		store:     store,
+		keyrings:  keyrings,
 		audit:     audit,
 		policy:    NewPolicyEngine(store, config.Policy(), telemetry),
 		telemetry: telemetry,
@@ -40,11 +50,12 @@ func NewService(config Config, store Store, audit *FileAuditSink, telemetry *Tel
 func NewServiceWithEvidenceVerifier(
 	config Config,
 	store Store,
+	keyrings keyprotection.KeyringProvider,
 	audit *FileAuditSink,
 	telemetry *Telemetry,
 	verifier EvidenceVerifier,
 ) *Service {
-	service := NewService(config, store, audit, telemetry)
+	service := NewService(config, store, keyrings, audit, telemetry)
 	if verifier != nil {
 		service.verifier = verifier
 	}
@@ -55,12 +66,13 @@ func NewServiceWithEvidenceVerifier(
 func NewServiceWithEvidenceVerifierAndNodeEvidence(
 	config Config,
 	store Store,
+	keyrings keyprotection.KeyringProvider,
 	audit *FileAuditSink,
 	telemetry *Telemetry,
 	verifier EvidenceVerifier,
 	nodeEvidence NodeEvidenceReader,
 ) *Service {
-	service := NewServiceWithEvidenceVerifier(config, store, audit, telemetry, verifier)
+	service := NewServiceWithEvidenceVerifier(config, store, keyrings, audit, telemetry, verifier)
 	service.policy.nodeEvidence = nodeEvidence
 	return service
 }
@@ -210,7 +222,7 @@ func (s *Service) Wrap(
 	)
 	ctx, keyringSpan := s.telemetry.start(ctx, "broker.keyring.wrap", attrs...)
 	started := time.Now()
-	ring, err := s.store.LoadKeyring(ctx, ref.ClusterID)
+	ring, err := s.loadKeyring(ctx, ref.ClusterID)
 	if err != nil {
 		keyringSpan.End()
 		decision = Deny(s.config.Policy(), protocolv1.ErrorCode_ERROR_CODE_INTERNAL, "keyring load failed")
@@ -327,7 +339,7 @@ func (s *Service) Unwrap(
 	)
 	ctx, keyringSpan := s.telemetry.start(ctx, "broker.keyring.unwrap", attrs...)
 	started := time.Now()
-	ring, err := s.store.LoadKeyring(ctx, ref.ClusterID)
+	ring, err := s.loadKeyring(ctx, ref.ClusterID)
 	if err != nil {
 		keyringSpan.End()
 		decision = Deny(s.config.Policy(), protocolv1.ErrorCode_ERROR_CODE_INTERNAL, "keyring load failed")
@@ -366,7 +378,7 @@ func (s *Service) Status(ctx context.Context, req *protocolv1.StatusRequest) (*p
 	if req != nil && req.GetClusterId() != "" {
 		clusterID = req.GetClusterId()
 	}
-	ring, err := s.store.LoadKeyring(ctx, clusterID)
+	ring, err := s.loadKeyring(ctx, clusterID)
 	if err != nil {
 		return &protocolv1.StatusResponse{
 			Ready: false,
@@ -428,7 +440,7 @@ func (s *Service) wrapKeyRef(
 		}
 		return ref, Allow(s.config.Policy())
 	}
-	ring, err := s.store.LoadKeyring(ctx, s.config.ClusterID)
+	ring, err := s.loadKeyring(ctx, s.config.ClusterID)
 	if err != nil {
 		return keyring.KeyRef{}, Deny(
 			s.config.Policy(),
@@ -445,6 +457,13 @@ func (s *Service) wrapKeyRef(
 		)
 	}
 	return active.Ref, Allow(s.config.Policy())
+}
+
+func (s *Service) loadKeyring(ctx context.Context, clusterID string) (*keyring.Ring, error) {
+	if s.keyrings == nil {
+		return nil, errors.New("keyring provider is required")
+	}
+	return s.keyrings.LoadKeyring(ctx, clusterID)
 }
 
 func (s *Service) evaluate(ctx context.Context, req policyRequest) PolicyDecision {

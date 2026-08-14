@@ -59,56 +59,6 @@ func TestEnrollmentServiceRunsThroughMutualTLSControlPlane(t *testing.T) {
 	}
 }
 
-func TestSQLiteMigrationInvalidatesPreEnrollmentTPMEvidence(t *testing.T) {
-	t.Parallel()
-	config := testConfig(t)
-	store := newTestStore(t, config)
-	now := time.Date(2026, time.August, 12, 9, 0, 0, 0, time.UTC)
-	if err := store.PutNodeEvidence(context.Background(), NodeEvidence{
-		ClusterID:    config.ClusterID,
-		NodeName:     testNodeName,
-		NodeUID:      fixtureNodeUID,
-		Provider:     nodeevidence.ProviderTPM2Quote,
-		EvidenceHash: "sha256:" + strings.Repeat("ef", 32),
-		CollectedAt:  now,
-		ExpiresAt:    now.Add(time.Minute),
-	}); !errors.Is(err, nodeevidence.ErrEnrollmentChanged) {
-		t.Fatalf("unenrolled TPM evidence write error = %v, want ErrEnrollmentChanged", err)
-	}
-	_, err := store.db.ExecContext(
-		context.Background(),
-		`INSERT INTO node_evidence(
-		   cluster_id, node_name, node_uid, provider, evidence_hash, collected_at,
-		   expires_at, updated_at, enrollment_revision
-		 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
-		config.ClusterID,
-		testNodeName,
-		fixtureNodeUID,
-		nodeevidence.ProviderTPM2Quote,
-		"sha256:"+strings.Repeat("ef", 32),
-		now.Format(time.RFC3339Nano),
-		now.Add(time.Minute).Format(time.RFC3339Nano),
-		now.Format(time.RFC3339Nano),
-	)
-	if err != nil {
-		t.Fatalf("seed pre-enrollment TPM evidence: %v", err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close seeded store: %v", err)
-	}
-	reopened, err := OpenSQLiteStore(context.Background(), config.SQLitePath)
-	if err != nil {
-		t.Fatalf("reopen migrated store: %v", err)
-	}
-	defer func() { _ = reopened.Close() }()
-	if _, err := reopened.NodeEvidence(context.Background(), config.ClusterID, testNodeName); !errors.Is(
-		err,
-		ErrNodeEvidenceNotFound,
-	) {
-		t.Fatalf("pre-enrollment TPM evidence after migration error = %v, want not found", err)
-	}
-}
-
 //nolint:gocyclo // One lifecycle test preserves the state-transition narrative.
 func TestEnrollmentServiceOwnsRevisionedNodeTrustLifecycle(t *testing.T) {
 	t.Parallel()

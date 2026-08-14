@@ -32,6 +32,12 @@ projection. Broker key material still uses a development protection profile,
 while TPM node AK policy and publisher scope are durable, revisioned broker
 state managed by authenticated and audited control-plane operations.
 
+The broker persists protected key records and reconstructs an in-memory
+keyring through a key-protector boundary for each operation. The only current
+protector is the explicitly labelled `development` adapter, whose payload is
+plaintext and makes no at-rest protection claim. A production protector, such
+as broker-TPM-backed envelope protection, remains future work.
+
 ### Local TPM mode
 
 Each approved stable node stores a TPM-sealed copy of the cluster wrapping key.

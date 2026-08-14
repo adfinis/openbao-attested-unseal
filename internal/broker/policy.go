@@ -101,7 +101,7 @@ func (e *PolicyEngine) evaluate(ctx context.Context, req policyRequest) PolicyDe
 	); err != nil {
 		return e.challengeDeny(err)
 	}
-	version, err := e.store.KeyVersion(ctx, req.KeyRef)
+	version, err := e.store.ProtectedKey(ctx, req.KeyRef)
 	if err != nil {
 		if errors.Is(err, keyring.ErrKeyNotFound) {
 			return Deny(e.policyID, protocolv1.ErrorCode_ERROR_CODE_KEY_NOT_FOUND, "key version was not found")

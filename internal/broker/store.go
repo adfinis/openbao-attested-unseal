@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/adfinis/openbao-attested-unseal/internal/keyprotection"
 	"github.com/adfinis/openbao-attested-unseal/internal/keyring"
 	"github.com/adfinis/openbao-attested-unseal/internal/nodeevidence"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
@@ -51,11 +52,7 @@ type Subject struct {
 
 // BootstrapKeyringRequest seeds a fresh broker keyring.
 type BootstrapKeyringRequest struct {
-	ClusterID            string
-	KeyID                string
-	Profile              string
-	PolicyID             string
-	Material             []byte
+	Key                  keyprotection.ProtectedKey
 	RecoveryPackageID    string
 	RecoveryThreshold    int
 	RecoveryShares       int
@@ -112,10 +109,7 @@ const (
 // RotationStartRequest creates a pending wrapping-key version.
 type RotationStartRequest struct {
 	OperationID string
-	ClusterID   string
-	KeyID       string
-	PolicyID    string
-	Material    []byte
+	Key         keyprotection.ProtectedKey
 	CreatedAt   time.Time
 }
 
@@ -156,11 +150,10 @@ type RotationVerification struct {
 type Store interface {
 	NodeEvidenceStore
 	nodeevidence.EnrollmentRepository
+	keyprotection.Repository
 	Close() error
 	BootstrapKeyring(ctx context.Context, request BootstrapKeyringRequest) error
-	ConfigureDevelopment(ctx context.Context, config Config, key []byte) error
-	LoadKeyring(ctx context.Context, clusterID string) (*keyring.Ring, error)
-	KeyVersion(ctx context.Context, ref keyring.KeyRef) (keyring.KeyVersion, error)
+	ConfigureDevelopment(ctx context.Context, config Config, key keyprotection.ProtectedKey) error
 	Subject(ctx context.Context, clusterID string, subject string) (Subject, error)
 	InsertSubject(ctx context.Context, clusterID string, subject string, now time.Time) error
 	RevokeSubject(ctx context.Context, clusterID string, subject string) error
@@ -168,6 +161,7 @@ type Store interface {
 	InsertEnrollmentRequest(ctx context.Context, record EnrollmentRequestRecord) error
 	InsertEnrollmentGrant(ctx context.Context, record EnrollmentGrantRecord) error
 	ConsumeEnrollmentGrant(ctx context.Context, grantID string, now time.Time) error
+	NextRotationKeyRef(ctx context.Context, clusterID string, keyID string) (keyring.KeyRef, error)
 	StartRotation(ctx context.Context, request RotationStartRequest) (RotationOperation, error)
 	ActivateRotation(ctx context.Context, operationID string, now time.Time) (RotationOperation, error)
 	RotationOperation(ctx context.Context, operationID string) (RotationOperation, error)

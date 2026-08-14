@@ -17,4 +17,4 @@ rule:
     - pattern:
         context: import $ALIAS "github.com/adfinis/openbao-attested-unseal/internal/storage/sqlite"
         selector: import_spec
-note: This remains a warning until existing online commands have migrated to authenticated control-plane APIs.
+note: This remains a warning until existing online commands have moved to authenticated control-plane APIs.

@@ -220,7 +220,7 @@ func TestRejectDeprecatedStaticNodeTrustConfig(t *testing.T) {
 		}
 	}`))
 	if err == nil || !strings.Contains(err.Error(), "authenticated node enrollment") {
-		t.Fatalf("deprecated config error = %v, want migration guidance", err)
+		t.Fatalf("deprecated config error = %v, want replacement guidance", err)
 	}
 }
 

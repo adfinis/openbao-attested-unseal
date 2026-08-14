@@ -303,7 +303,7 @@ func startAdminBrokerTestServer(t *testing.T) (string, *broker.MemoryNodeEvidenc
 		},
 	}
 	cache := broker.NewMemoryNodeEvidenceCache()
-	service := broker.NewService(config, nil, nil, nil)
+	service := broker.NewService(config, nil, nil, nil, nil)
 	server, err := broker.NewGRPCServer(config, service, cache)
 	if err != nil {
 		t.Fatalf("NewGRPCServer returned error: %v", err)
