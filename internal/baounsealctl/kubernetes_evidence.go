@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/adfinis/openbao-attested-unseal/internal/broker"
+	"github.com/adfinis/openbao-attested-unseal/internal/brokeradmin"
 	"github.com/adfinis/openbao-attested-unseal/internal/cli"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	"google.golang.org/grpc"
@@ -108,7 +108,7 @@ func parseK8sEvidenceOptions(
 	clientKeyPath := flags.String("client-key", "", "Optional PEM client key for broker mTLS.")
 	clusterID := flags.String("cluster-id", "prod-eu1", "Cluster identifier.")
 	nodeName := flags.String("node-name", "", "Optional Kubernetes node name filter.")
-	timeout := flags.Duration("timeout", broker.DefaultKubernetesAPITimeout, "Broker request timeout.")
+	timeout := flags.Duration("timeout", brokeradmin.DefaultRequestTimeout, "Broker request timeout.")
 	format := flags.String("format", formatText, "Output format: text or json.")
 	if err := flags.Parse(args); err != nil {
 		return k8sEvidenceOptions{}, cli.WithExitCode(cli.ExitUsage, err)

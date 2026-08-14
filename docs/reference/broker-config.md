@@ -20,7 +20,7 @@
   "development_wrapping_key_b64": "base64-encoded-32-byte-key",
   "challenge_ttl_seconds": 120,
   "kubernetes": {
-    "enabled": false,
+    "enabled": true,
     "api_server": "https://kubernetes.default.svc",
     "ca_cert_file": "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
     "bearer_token_file": "/var/run/secrets/kubernetes.io/serviceaccount/token",
@@ -31,7 +31,22 @@
     "node_evidence_retention_seconds": 86400,
     "api_timeout_seconds": 10,
     "allow_unbound_service_account_tokens": false,
-    "allow_fake_node_evidence_publish": false
+    "allow_fake_node_evidence_publish": false,
+    "node_evidence_publish_providers": ["generic-tpm2-quote"],
+    "node_evidence_tpm_policies": {
+      "worker-a": {
+        "node_uid": "2e913a61-62f6-4dcb-98c6-302deda22d2d",
+        "policy": {
+          "mode": "tpm-only",
+          "enrolled_ak_public_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }
+      }
+    },
+    "node_evidence_publishers": {
+      "sha256:abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd": {
+        "node_names": ["worker-a"]
+      }
+    }
   }
 }
 ```
@@ -60,14 +75,46 @@ Node evidence and workload evidence diagnostics return only operator metadata:
 cluster, node name, optional node UID, provider, evidence hash, timestamps,
 status, verified subject, and sanitized workload placement. They do not echo
 submitted workload tokens, raw evidence payloads, raw claims, broker error
-payloads, policy fields, or future raw evidence bodies.
+payloads, policy fields, or raw evidence bodies.
 
 `allow_fake_node_evidence_publish` enables the temporary `fake-local` admin
 publish path used by kind and local labs. Leave it disabled outside test
-deployments; production node evidence should come from an authenticated node
-attestation publisher.
+deployments.
 
-See [Kubernetes Profile Examples](kubernetes-profile.md) for the beta
+`node_evidence_publish_providers` is the explicit allow-list for non-fake node
+evidence published through the broker admin API. The supported provider is
+`generic-tpm2-quote`. Enabling it requires a `node_evidence_tpm_policies` entry
+for each enrolled node name. Each entry binds the Kubernetes node UID to an
+enrolled attestation-key public hash and TPM policy.
+
+The agent first requests a single-use broker challenge, collects a raw TPM
+quote over that nonce, and submits the raw evidence. The broker verifies the
+challenge, quote signature and shape, PCR digest, node UID, enrolled AK, and
+configured policy. It assigns the collection and expiry times, caps the
+requested TTL, and persists only operator-safe metadata plus a SHA-256 digest
+of the submitted payload. The raw quote is not retained or returned by
+diagnostic APIs.
+
+`node_evidence_publishers` is the TPM publisher role mapping. Each key is the
+lowercase `sha256:` digest of a client certificate's DER encoding, and each
+value lists the node names that certificate may challenge and publish for. The
+generic TPM provider requires TLS, client-certificate verification, and at
+least one authorized publisher for every enrolled node. Obtain the hex digest
+for a PEM certificate with:
+
+```sh
+openssl x509 -in agent.crt -outform DER | shasum -a 256
+```
+
+The `tpm-only` policy proves freshness, quote integrity, and possession of the
+enrolled AK. It does not claim Secure Boot. A `secureboot` policy additionally
+requires `provider_profile = "generic-pc-secureboot"` and a `pcr_policy` whose
+selection includes PCR 7 and whose enrolled digest matches the quoted values.
+The certificate role is deliberately independent of the AK enrollment: mTLS
+authorizes which agent may submit for a node, while TPM verification proves the
+submitted quote came from the enrolled AK and satisfies policy.
+
+See [Kubernetes Profile Examples](kubernetes-profile.md) for the preview
 Kubernetes profile contract and plugin evidence settings.
 
 `api_server`, `ca_cert_file`, and `bearer_token_file` are optional for
@@ -86,8 +133,9 @@ The M2 policy document is intentionally narrow:
 }
 ```
 
-Only `development-subject` mode is implemented in M2. Real attestation policy
-arrives in later milestones.
+`development-subject` is the only workload authorization policy mode. TPM node
+evidence uses the separate per-node policies described above; it does not turn
+the workload policy into a general-purpose authorization language.
 
 ## OpenBao Seal Configuration
 

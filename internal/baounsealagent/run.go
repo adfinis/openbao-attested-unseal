@@ -94,7 +94,7 @@ func runAgent(ctx context.Context, options runOptions, stdout io.Writer) error {
 	}
 	defer func() { _ = conn.Close() }()
 
-	provider, err := publishOnceProvider(options.providerID)
+	provider, err := publishOnceProvider(options.publishOnceOptions)
 	if err != nil {
 		return err
 	}

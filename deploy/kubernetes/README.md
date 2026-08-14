@@ -41,4 +41,5 @@ bao-unsealctl k8s publish-node \
 
 The first production-ready manifest follow-up is to replace the development
 wrapping key, plaintext transport, and fake/local node evidence assumptions
-with real secret management, TLS, and a node evidence publisher.
+with real secret management and TLS, and deploy the node-evidence agent with
+enrolled per-node TPM policies.

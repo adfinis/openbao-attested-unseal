@@ -1,0 +1,23 @@
+id: no-storage-access-from-online-cli
+valid:
+  - |
+    package p
+
+    func status(client AdminClient) error {
+      return client.Status()
+    }
+invalid:
+  - |
+    package p
+
+    func status() error {
+      store, err := broker.OpenSQLiteStore(ctx, statePath)
+      _ = store
+      return err
+    }
+  - |
+    package p
+
+    import "github.com/adfinis/openbao-attested-unseal/internal/storage/sqlite"
+
+    func status(store *sqlite.Store) error { return nil }

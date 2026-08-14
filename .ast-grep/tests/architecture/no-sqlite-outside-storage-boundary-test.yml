@@ -1,0 +1,19 @@
+id: no-sqlite-outside-storage-boundary
+valid:
+  - |
+    package p
+
+    type Repository interface {
+      Save([]byte) error
+    }
+invalid:
+  - |
+    package p
+
+    import "database/sql"
+
+    func open() *sql.DB { return nil }
+  - |
+    package p
+
+    import _ "modernc.org/sqlite"

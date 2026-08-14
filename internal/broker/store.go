@@ -178,6 +178,14 @@ type Store interface {
 	) (RotationVerification, error)
 	RotationVerifications(ctx context.Context, operationID string) ([]RotationVerification, error)
 	CreateChallenge(ctx context.Context, challenge Challenge) error
+	ChallengeNonce(
+		ctx context.Context,
+		challengeID string,
+		clusterID string,
+		subject string,
+		operation protocolv1.Operation,
+		now time.Time,
+	) ([]byte, error)
 	ConsumeChallenge(
 		ctx context.Context,
 		challengeID string,

@@ -1,0 +1,21 @@
+id: no-client-verified-node-evidence
+valid:
+  - |
+    package p
+
+    func evidence() nodeevidence.Submission {
+      return nodeevidence.Submission{
+        Provider: "generic-tpm2-quote",
+        Payload: payload,
+      }
+    }
+invalid:
+  - |
+    package p
+
+    func evidence() nodeevidence.Evidence {
+      return nodeevidence.Evidence{
+        Provider: "generic-tpm2-quote",
+        EvidenceHash: hash,
+      }
+    }

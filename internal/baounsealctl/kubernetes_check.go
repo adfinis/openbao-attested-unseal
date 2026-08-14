@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	k8sprovider "github.com/adfinis/openbao-attested-unseal/internal/attestation/providers/kubernetes"
-	"github.com/adfinis/openbao-attested-unseal/internal/broker"
+	"github.com/adfinis/openbao-attested-unseal/internal/brokeradmin"
 	"github.com/adfinis/openbao-attested-unseal/internal/cli"
 	protocolv1 "github.com/adfinis/openbao-attested-unseal/internal/protocol/v1"
 	"google.golang.org/grpc"
@@ -103,7 +103,7 @@ func parseK8sCheckOptions(args []string, stderr io.Writer) (k8sCheckOptions, err
 		"",
 		"Optional Kubernetes workload token file for broker-side evidence diagnostics.",
 	)
-	timeout := flags.Duration("timeout", broker.DefaultKubernetesAPITimeout, "Broker request timeout.")
+	timeout := flags.Duration("timeout", brokeradmin.DefaultRequestTimeout, "Broker request timeout.")
 	format := flags.String("format", formatText, "Output format: text or json.")
 	if err := flags.Parse(args); err != nil {
 		return k8sCheckOptions{}, cli.WithExitCode(cli.ExitUsage, err)

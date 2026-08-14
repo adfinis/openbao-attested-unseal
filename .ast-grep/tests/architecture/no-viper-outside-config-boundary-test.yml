@@ -3,7 +3,7 @@ valid:
   - |
     package p
 
-    import "github.com/dc-tec/openbao-kubernetes-kms/internal/config"
+    import "github.com/adfinis/openbao-attested-unseal/internal/config"
 
     func use(cfg config.Config) {}
 invalid:

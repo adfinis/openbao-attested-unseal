@@ -13,6 +13,7 @@ import (
 	"github.com/adfinis/openbao-attested-unseal/internal/broker"
 	"github.com/adfinis/openbao-attested-unseal/internal/cli"
 	"github.com/adfinis/openbao-attested-unseal/internal/nodeagent"
+	tpmlocal "github.com/adfinis/openbao-attested-unseal/internal/tpm"
 	"github.com/adfinis/openbao-attested-unseal/internal/version"
 )
 
@@ -42,19 +43,10 @@ func TestPublishOnceJSON(t *testing.T) {
 		"-format", testFormatJSON,
 	)
 
-	expected, err := (nodeagent.FakeLocalProvider{}).CollectNodeEvidence(context.Background(), nodeagent.PublishRequest{
-		ClusterID: testClusterID,
-		NodeName:  testNodeName,
-		NodeUID:   testNodeUID,
-		TTL:       time.Minute,
-	})
-	if err != nil {
-		t.Fatalf("CollectNodeEvidence returned error: %v", err)
-	}
 	if out.Decision != testDecision ||
 		out.Status != testStatus ||
 		out.ProviderID != broker.NodeEvidenceProviderFakeLocal ||
-		out.EvidenceHash != expected.EvidenceHash {
+		out.EvidenceHash == "" {
 		t.Fatalf("publish output = %#v, want fake-local allow", out)
 	}
 
@@ -98,6 +90,56 @@ func TestPublishOnceRejectsMissingNodeName(t *testing.T) {
 	)
 	if got := cli.ProcessExitCode(err); got != int(cli.ExitUsage) {
 		t.Fatalf("exit code = %d, want %d", got, cli.ExitUsage)
+	}
+}
+
+func TestParsePublishOnceOptionsAcceptsTPMProvider(t *testing.T) {
+	var stderr bytes.Buffer
+	options, err := parsePublishOnceOptions([]string{
+		"-addr", "127.0.0.1:8443",
+		"-plaintext",
+		"-cluster-id", testClusterID,
+		"-node-name", testNodeName,
+		"-provider-id", broker.NodeEvidenceProviderTPM2Quote,
+		"-tpm-device", "/tmp/swtpm.sock",
+		"-tpm-pcr-bank", tpmlocal.HashSHA256,
+		"-tpm-pcrs", "7,0,7",
+		"-platform-hint", tpmlocal.ProfileGenericPCSecureBoot,
+		"-ttl", "1m",
+	}, &stderr)
+	if err != nil {
+		t.Fatalf("parsePublishOnceOptions returned error: %v", err)
+	}
+	if options.providerID != broker.NodeEvidenceProviderTPM2Quote ||
+		options.tpmDevice != "/tmp/swtpm.sock" ||
+		options.tpmPCRBank != tpmlocal.HashSHA256 ||
+		options.platformHint != tpmlocal.ProfileGenericPCSecureBoot {
+		t.Fatalf("options = %#v, want TPM provider options", options)
+	}
+	if got, want := options.tpmPCRs, []int{7, 0}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("TPM PCRs = %#v, want %#v", got, want)
+	}
+}
+
+func TestPublishOnceProviderBuildsTPMProvider(t *testing.T) {
+	provider, err := publishOnceProvider(publishOnceOptions{
+		providerID:   broker.NodeEvidenceProviderTPM2Quote,
+		tpmDevice:    "/tmp/swtpm.sock",
+		tpmPCRBank:   tpmlocal.HashSHA256,
+		tpmPCRs:      []int{7},
+		platformHint: tpmlocal.ProfileGenericPCSecureBoot,
+	})
+	if err != nil {
+		t.Fatalf("publishOnceProvider returned error: %v", err)
+	}
+	tpmProvider, ok := provider.(nodeagent.TPMProvider)
+	if !ok {
+		t.Fatalf("provider type = %T, want nodeagent.TPMProvider", provider)
+	}
+	if tpmProvider.Device.Path != "/tmp/swtpm.sock" ||
+		tpmProvider.Selection.Hash != tpmlocal.HashSHA256 ||
+		tpmProvider.PlatformHint != tpmlocal.ProfileGenericPCSecureBoot {
+		t.Fatalf("TPM provider = %#v, want configured values", tpmProvider)
 	}
 }
 

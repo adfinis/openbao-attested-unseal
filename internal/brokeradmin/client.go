@@ -8,10 +8,18 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+)
+
+const (
+	// DefaultNodeEvidenceTTL is the client default for published node evidence freshness.
+	DefaultNodeEvidenceTTL = 5 * time.Minute
+	// DefaultRequestTimeout bounds one broker admin client operation by default.
+	DefaultRequestTimeout = 10 * time.Second
 )
 
 // ClientOptions configures a broker admin gRPC client.

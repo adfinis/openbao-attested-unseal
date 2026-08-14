@@ -1,0 +1,20 @@
+id: no-client-verified-node-evidence
+snapshots:
+  ? |
+    package p
+
+    func evidence() nodeevidence.Evidence {
+      return nodeevidence.Evidence{
+        Provider: "generic-tpm2-quote",
+        EvidenceHash: hash,
+      }
+    }
+  : labels:
+    - source: |-
+        nodeevidence.Evidence{
+            Provider: "generic-tpm2-quote",
+            EvidenceHash: hash,
+          }
+      style: primary
+      start: 60
+      end: 146

@@ -1,0 +1,21 @@
+id: no-client-normalized-evidence-claims
+valid:
+  - |
+    package p
+
+    func evidence() *protocolv1.EvidenceEnvelope {
+      return &protocolv1.EvidenceEnvelope{
+        Provider: "tpm2_quote",
+        Evidence: payload,
+      }
+    }
+invalid:
+  - |
+    package p
+
+    func evidence() *protocolv1.EvidenceEnvelope {
+      return &protocolv1.EvidenceEnvelope{
+        Provider: "development",
+        NormalizedClaims: claims,
+      }
+    }

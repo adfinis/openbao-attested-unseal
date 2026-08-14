@@ -1,0 +1,15 @@
+id: no-broker-import-in-node-evidence-boundary
+valid:
+  - |
+    package p
+
+    import "github.com/adfinis/openbao-attested-unseal/internal/nodeevidence"
+
+    func use(reader nodeevidence.Reader) {}
+invalid:
+  - |
+    package p
+
+    import "github.com/adfinis/openbao-attested-unseal/internal/broker"
+
+    func use(server *broker.Server) {}

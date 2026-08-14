@@ -2,11 +2,11 @@
 
 Status: draft
 
-Last reviewed: 2026-06-30
+Last reviewed: 2026-08-11
 
-This runbook covers the beta Kubernetes broker profile. It assumes
+This runbook covers the preview Kubernetes broker profile. It assumes
 `bao-unseald` is configured with the Kubernetes verifier and that node evidence
-is supplied by the current fake/local test path or a future node evidence
+is supplied by either the fake/local test path or the generic TPM node-evidence
 publisher.
 
 ## Preflight
@@ -57,7 +57,7 @@ The broker needs Kubernetes API access for:
 - `authentication.k8s.io/v1` TokenReview;
 - core/v1 Pod `get` for the configured namespace and OpenBao Pod name.
 
-The beta RBAC manifest in `deploy/kubernetes/rbac.yaml` grants exactly those
+The preview RBAC manifest in `deploy/kubernetes/rbac.yaml` grants exactly those
 permissions to the `openbao/bao-unseald` service account. The kind e2e test
 applies that manifest and verifies that the service account can create a
 TokenReview and read the OpenBao Pod, without granting broad Pod permissions
@@ -75,8 +75,8 @@ available for diagnostics after it expires. Broker admin publish/list operations
 prune evidence whose `expires_at` is older than this retention window.
 
 Diagnostics show node evidence metadata and evidence hashes only. They do not
-show submitted raw claims, broker error payloads, policy fields, or future raw
-evidence bodies.
+show submitted raw claims, broker error payloads, policy fields, or raw evidence
+bodies.
 
 For example:
 
@@ -196,7 +196,10 @@ provider.
 
 ## Current Gaps
 
-- The tracked Kubernetes manifests are beta/lab examples and need production
+- The tracked Kubernetes manifests are preview/lab examples and need production
   hardening.
-- There is no production node attestation agent yet.
+- TPM evidence is broker-verified, but AK enrollment and revocation are static
+  configuration rather than authenticated operator workflows.
+- the remaining control-plane and diagnostic RPCs do not yet have distinct
+  authorization roles.
 - `fake-local` node evidence is for tests and local development only.

@@ -45,12 +45,25 @@ bao-unsealctl tpm status -state-path /var/lib/openbao-attested-unseal
 
 Use `--format json` on lifecycle commands for automation.
 
-`bao-unseal-agent` is the node-local evidence publisher. The first beta command
-publishes one synthetic `fake-local` evidence record and exits:
+`bao-unseal-agent` is the node-local evidence publisher. For local tests, it
+can publish one synthetic `fake-local` evidence record and exit:
 
 ```sh
 bao-unseal-agent publish-once -addr 127.0.0.1:8443 -plaintext \
   -cluster-id prod-eu1 -node-name kind-worker
+```
+
+For generic TPM 2.0 evidence, select `generic-tpm2-quote` and the PCR selection
+to quote. The agent obtains the nonce from the broker and submits the raw quote;
+the broker config must enroll the node UID, AK public hash, TPM policy, and the
+agent client-certificate fingerprint for that node:
+
+```sh
+bao-unseal-agent publish-once -addr bao-unseald.openbao.svc:8443 \
+  -cluster-id prod-eu1 -node-name "$NODE_NAME" -node-uid "$NODE_UID" \
+  -provider-id generic-tpm2-quote \
+  -tpm-device /dev/tpmrm0 -tpm-pcr-bank sha256 -tpm-pcrs 7 \
+  -platform-hint generic-pc-secureboot
 ```
 
 Use `run` when the agent should keep node evidence fresh:
@@ -67,9 +80,10 @@ publish failures; set `-max-failures` to exit after a bounded number of
 consecutive failures. With `-format json`, `run` emits newline-delimited JSON
 events.
 
-`k8s publish-node` is a beta lab helper. It publishes synthetic `fake-local`
+`k8s publish-node` is a preview lab helper. It publishes synthetic `fake-local`
 node evidence to a broker admin API so kind and local tests can exercise node
-evidence policy before a production node attestation agent exists. Use TLS by
+evidence policy. It uses the same challenge-bound submission flow, but does not
+accept custom evidence hashes and makes no TPM or platform claim. Use TLS by
 default; `-plaintext` is only for local test brokers.
 
 `k8s check` verifies broker admin reachability and node evidence freshness. With

@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ast-grep/ast-grep/main/schemas/rule.json
+
+id: no-grpc-server-outside-transport-boundary
+message: Construct gRPC servers only in the transport adapter boundary.
+severity: error
+language: Go
+files:
+  - internal/**/*.go
+ignores:
+  - internal/broker/server.go
+  - internal/transport/grpc/**/*.go
+  - '**/*_test.go'
+rule:
+  pattern:
+    context: func f() { _ = grpc.NewServer($$$ARGS) }
+    selector: call_expression
+note: The legacy broker server is an explicit migration exception; new gRPC composition belongs under internal/transport/grpc.

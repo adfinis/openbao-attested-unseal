@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ast-grep/ast-grep/main/schemas/rule.json
+
+id: no-client-verified-node-evidence
+message: Evidence publishers must submit untrusted raw evidence instead of constructing broker-trusted node evidence records.
+severity: error
+language: Go
+files:
+  - internal/baounsealagent/**/*.go
+  - internal/baounsealctl/**/*.go
+  - internal/kmsplugin/**/*.go
+  - internal/nodeagent/**/*.go
+ignores:
+  - '**/*_test.go'
+rule:
+  pattern: 'nodeevidence.Evidence{$$$BEFORE, EvidenceHash: $HASH, $$$AFTER}'
+note: Publishers submit nodeevidence.Submission values; broker client adapters may only map Evidence records returned after broker verification.

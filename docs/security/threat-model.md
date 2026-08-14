@@ -2,7 +2,7 @@
 
 Status: draft
 
-Last reviewed: 2026-06-28
+Last reviewed: 2026-08-11
 
 ## Purpose
 
@@ -83,7 +83,7 @@ with TPM or vTPM evidence as one input to policy.
 
 ## OpenBao Plugin Context
 
-OpenBao 2.6.0 beta added a `kms` plugin type for Auto Unseal. Operators can
+OpenBao 2.6 added a `kms` plugin type for Auto Unseal. Operators can
 register a KMS plugin with a `plugin "kms" "name"` stanza and use that name in
 the `seal "name"` stanza. The plugin implements the `go-kms-wrapping` wrapper
 contract used by OpenBao's Auto Unseal path.

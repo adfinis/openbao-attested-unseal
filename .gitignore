@@ -11,3 +11,4 @@ deploy/harvester/**/values.local.yaml
 
 # Local working notes
 workstreams/
+/.local/

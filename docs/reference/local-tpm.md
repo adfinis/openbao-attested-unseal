@@ -2,7 +2,7 @@
 
 Status: draft
 
-Last reviewed: 2026-06-29
+Last reviewed: 2026-08-11
 
 Local TPM mode stores a TPM sealed copy of the cluster wrapping key on each
 approved OpenBao node. Runtime unseal does not call a broker or external KMS.
@@ -96,9 +96,9 @@ is not the active-key selector after rotation.
 
 ## OpenBao Seal Configuration
 
-OpenBao 2.6.0 beta expects the plugin binary to be registered with
-`plugin_directory` and a `plugin "kms"` stanza. The beta configuration uses
-`sha256sum` for the plugin checksum:
+OpenBao 2.6 registers the plugin binary through `plugin_directory` and a
+`plugin "kms"` stanza. The configuration uses `sha256sum` for the plugin
+checksum:
 
 ```hcl
 plugin_directory = "/opt/openbao/plugins"
@@ -124,8 +124,8 @@ seal "attested-unseal" {
 
 When testing with `swtpm`, set `tpm_device` to the Unix socket path.
 
-The current Docker smoke path has been verified against
-`openbao/openbao:2.6.0-beta20260622` with `swtpm`: initialize with
+The Docker smoke path defaults to `openbao/openbao:2.6.1` with `swtpm`:
+initialize with
 `-recovery-shares`/`-recovery-threshold`, stop the OpenBao container, start it
 again with the same storage, TPM socket, and local TPM state, and confirm
 `bao status -format=json` reports `initialized=true` and `sealed=false`.

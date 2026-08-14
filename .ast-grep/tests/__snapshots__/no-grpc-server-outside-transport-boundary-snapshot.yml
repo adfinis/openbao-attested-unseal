@@ -1,0 +1,14 @@
+id: no-grpc-server-outside-transport-boundary
+snapshots:
+  ? |
+    package p
+
+    func serve() {
+      server := grpc.NewServer(options...)
+      _ = server
+    }
+  : labels:
+    - source: grpc.NewServer(options...)
+      style: primary
+      start: 38
+      end: 64
