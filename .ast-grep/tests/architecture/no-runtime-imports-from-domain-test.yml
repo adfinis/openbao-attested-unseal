@@ -1,0 +1,27 @@
+id: no-runtime-imports-from-domain
+valid:
+  - |
+    package p
+
+    import "github.com/adfinis/openbao-attested-unseal/internal/keyring"
+
+    func use(ref keyring.KeyRef) {}
+invalid:
+  - |
+    package p
+
+    import "github.com/adfinis/openbao-attested-unseal/internal/baounseald"
+
+    func use(runtime *baounseald.Runtime) {}
+  - |
+    package p
+
+    import admin "github.com/adfinis/openbao-attested-unseal/internal/brokeradmin"
+
+    func use(client *admin.Client) {}
+  - |
+    package p
+
+    import grpcadapter "github.com/adfinis/openbao-attested-unseal/internal/transport/grpc"
+
+    func use(server *grpcadapter.Server) {}

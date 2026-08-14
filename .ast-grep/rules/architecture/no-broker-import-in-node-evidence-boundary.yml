@@ -12,9 +12,7 @@ files:
 ignores:
   - '**/*_test.go'
 rule:
-  any:
-    - pattern: import "github.com/adfinis/openbao-attested-unseal/internal/broker"
-    - pattern:
-        context: import $ALIAS "github.com/adfinis/openbao-attested-unseal/internal/broker"
-        selector: import_spec
+  all:
+    - kind: import_spec
+    - regex: '"github\.com/adfinis/openbao-attested-unseal/internal/broker(?:/[^"]*)?"'
 note: Depending on broker would reverse the intended dependency direction; use nodeevidence ports and types.

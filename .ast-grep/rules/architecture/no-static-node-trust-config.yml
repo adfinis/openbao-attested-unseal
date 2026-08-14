@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ast-grep/ast-grep/main/schemas/rule.json
+
+id: no-static-node-trust-config
+message: Node AK policy and publisher scope belong to the broker enrollment repository, not static daemon config.
+severity: error
+language: Go
+files:
+  - internal/**/*.go
+ignores:
+  - '**/*_test.go'
+rule:
+  all:
+    - kind: field_declaration
+    - regex: 'json:"node_evidence_(tpm_policies|publishers)"'
+    - has:
+        kind: map_type
+note: Keep only control-plane mTLS role anchors in config; enroll and revoke node-specific trust through the broker API.

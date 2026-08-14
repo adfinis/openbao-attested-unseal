@@ -7,7 +7,18 @@ snapshots:
 
     func use(server *broker.Server) {}
   : labels:
-    - source: import "github.com/adfinis/openbao-attested-unseal/internal/broker"
+    - source: '"github.com/adfinis/openbao-attested-unseal/internal/broker"'
       style: primary
-      start: 11
+      start: 18
       end: 78
+  ? |
+    package p
+
+    import runtime "github.com/adfinis/openbao-attested-unseal/internal/broker/runtime"
+
+    func use(server *runtime.Server) {}
+  : labels:
+    - source: runtime "github.com/adfinis/openbao-attested-unseal/internal/broker/runtime"
+      style: primary
+      start: 18
+      end: 94

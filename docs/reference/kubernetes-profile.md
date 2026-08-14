@@ -2,7 +2,7 @@
 
 Status: draft
 
-Last reviewed: 2026-08-11
+Last reviewed: 2026-08-12
 
 These examples show the current Kubernetes runtime profile contract for
 `bao-unseald`. They are intentionally preview examples, not production deployment
@@ -136,11 +136,10 @@ The agent requests a single-use challenge from the broker, collects a raw TPM
 raw evidence. The broker verifies the nonce and challenge ID, AK signature,
 quote shape, PCR selection and digest, configured node UID, enrolled AK public
 hash, and TPM policy. Only then does it assign freshness and store a verified
-metadata projection plus the payload digest. Static enrollment configuration
-and the lack of authenticated enrollment and revocation operations still make
-this a preview rather than a complete production boundary. TPM challenge and
-publish calls require a configured mTLS certificate fingerprint scoped to the
-submitted node name.
+metadata projection plus the payload digest. Node AK policy and publisher scope
+are revisioned broker state. Authenticated `node-evidence-admin` operations
+enroll or revoke that state, and every TPM challenge and publish resolves the
+active enrollment for the submitted node.
 
 Broker diagnostics expose only node evidence metadata: cluster, node name,
 optional node UID, provider, evidence hash, timestamps, and freshness status.
@@ -171,10 +170,37 @@ bao-unseal-agent run \
 ```
 
 For TPM-backed evidence, enable `generic-tpm2-quote` in broker
-`node_evidence_publish_providers`, add the node to
-`node_evidence_tpm_policies`, authorize the agent certificate under
-`node_evidence_publishers`, and run the agent with TPM flags. This provider
-requires TLS with client-certificate verification:
+`node_evidence_publish_providers` and configure a control-plane certificate
+with the `node-evidence-admin` role. Write the approved TPM policy to a file:
+
+```json
+{
+  "mode": "tpm-only",
+  "enrolled_ak_public_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+}
+```
+
+Then enroll the node UID, policy, and publisher certificate through the running
+broker:
+
+```sh
+bao-unsealctl k8s nodes enroll \
+  -addr bao-unseald.openbao.svc:8443 \
+  -ca-cert broker-ca.crt \
+  -client-cert operator.crt \
+  -client-key operator.key \
+  -cluster-id prod-eu1 \
+  -node-name "$NODE_NAME" \
+  -node-uid "$NODE_UID" \
+  -tpm-policy node-tpm-policy.json \
+  -publisher-cert-sha256 "sha256:$PUBLISHER_CERT_DIGEST" \
+  -reason "approve node evidence publisher CHG-1234"
+```
+
+Re-enrollment replaces the node policy and publisher set, increments the trust
+revision, and invalidates previously verified evidence. This provider requires
+TLS with client-certificate verification. After enrollment, run the agent with
+TPM flags:
 
 ```sh
 bao-unseal-agent run \
@@ -204,8 +230,8 @@ bao-unsealctl k8s publish-node \
 The admin publish path verifies a challenge-bound submission before writing to
 the broker node evidence store. It requires either
 `allow_fake_node_evidence_publish = true` for `fake-local`, or both the
-`generic-tpm2-quote` allow-list entry, matching enrolled node policy, and an
-authorized mTLS client certificate scoped to that node. In normal broker
+`generic-tpm2-quote` allow-list entry, an active broker enrollment, and an
+authorized mTLS publisher certificate scoped to that node. In normal broker
 runtime this store is SQLite-backed; in unit tests it can be an in-memory
 cache.
 

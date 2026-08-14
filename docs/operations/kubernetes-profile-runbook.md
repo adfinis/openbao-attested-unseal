@@ -162,9 +162,23 @@ Subject revocation blocks future broker decisions for that normalized
 Kubernetes subject. It does not erase already-issued OpenBao tokens, undo an
 already completed unwrap, or rotate broker wrapping keys.
 
-If one Kubernetes node is suspected, remove or stop publishing its node
-evidence first. If key material may have been exposed, rotate the broker
-wrapping key as well.
+If one Kubernetes node is suspected, revoke its node trust through the running
+broker:
+
+```sh
+bao-unsealctl k8s nodes revoke \
+  -addr bao-unseald.openbao.svc:8443 \
+  -ca-cert broker-ca.crt \
+  -client-cert operator.crt \
+  -client-key operator.key \
+  -cluster-id prod-eu1 \
+  -node-name worker-a \
+  -reason "isolate suspected node INC-1234"
+```
+
+Revocation removes cached verified evidence and denies subsequent TPM challenge
+and publication calls for that node. It does not undo a completed unwrap. If
+key material may have been exposed, rotate the broker wrapping key as well.
 
 ## Rotation
 
@@ -198,8 +212,6 @@ provider.
 
 - The tracked Kubernetes manifests are preview/lab examples and need production
   hardening.
-- TPM evidence is broker-verified, but AK enrollment and revocation are static
-  configuration rather than authenticated operator workflows.
-- the remaining control-plane and diagnostic RPCs do not yet have distinct
+- The remaining control-plane and diagnostic RPCs do not yet have distinct
   authorization roles.
 - `fake-local` node evidence is for tests and local development only.

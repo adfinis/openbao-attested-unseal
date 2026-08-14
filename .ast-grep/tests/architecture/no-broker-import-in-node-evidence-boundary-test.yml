@@ -13,3 +13,9 @@ invalid:
     import "github.com/adfinis/openbao-attested-unseal/internal/broker"
 
     func use(server *broker.Server) {}
+  - |
+    package p
+
+    import runtime "github.com/adfinis/openbao-attested-unseal/internal/broker/runtime"
+
+    func use(server *runtime.Server) {}

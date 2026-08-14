@@ -19,6 +19,14 @@
   "key_id": "root",
   "development_wrapping_key_b64": "base64-encoded-32-byte-key",
   "challenge_ttl_seconds": 120,
+  "control_plane": {
+    "identities": {
+      "sha256:abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd": {
+        "roles": ["node-evidence-admin"],
+        "cluster_ids": ["prod-eu1"]
+      }
+    }
+  },
   "kubernetes": {
     "enabled": true,
     "api_server": "https://kubernetes.default.svc",
@@ -32,21 +40,7 @@
     "api_timeout_seconds": 10,
     "allow_unbound_service_account_tokens": false,
     "allow_fake_node_evidence_publish": false,
-    "node_evidence_publish_providers": ["generic-tpm2-quote"],
-    "node_evidence_tpm_policies": {
-      "worker-a": {
-        "node_uid": "2e913a61-62f6-4dcb-98c6-302deda22d2d",
-        "policy": {
-          "mode": "tpm-only",
-          "enrolled_ak_public_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-        }
-      }
-    },
-    "node_evidence_publishers": {
-      "sha256:abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd": {
-        "node_names": ["worker-a"]
-      }
-    }
+    "node_evidence_publish_providers": ["generic-tpm2-quote"]
   }
 }
 ```
@@ -81,11 +75,24 @@ payloads, policy fields, or raw evidence bodies.
 publish path used by kind and local labs. Leave it disabled outside test
 deployments.
 
+`control_plane.identities` maps lowercase SHA-256 digests of authenticated
+client certificates to narrow roles and cluster scopes. The
+`node-evidence-admin` role authorizes the enrollment, listing, and revocation
+RPCs used by `bao-unsealctl k8s nodes`. At least one identity with this role for
+the configured cluster is required when the generic TPM provider is enabled.
+
 `node_evidence_publish_providers` is the explicit allow-list for non-fake node
-evidence published through the broker admin API. The supported provider is
-`generic-tpm2-quote`. Enabling it requires a `node_evidence_tpm_policies` entry
-for each enrolled node name. Each entry binds the Kubernetes node UID to an
-enrolled attestation-key public hash and TPM policy.
+evidence published through the broker evidence API. The supported provider is
+`generic-tpm2-quote`. Node UID, AK policy, and publisher certificate scope are
+durable enrollment state managed through the authenticated control plane; they
+are not daemon configuration.
+
+The removed `node_evidence_tpm_policies` and `node_evidence_publishers` keys are
+rejected at startup. Enroll each node through the running broker before starting
+its TPM evidence agent; the broker does not silently import old static trust.
+During database migration, TPM evidence without an enrollment revision is
+discarded and must be republished after enrollment. Fake/local lab evidence is
+unchanged.
 
 The agent first requests a single-use broker challenge, collects a raw TPM
 quote over that nonce, and submits the raw evidence. The broker verifies the
@@ -95,15 +102,14 @@ requested TTL, and persists only operator-safe metadata plus a SHA-256 digest
 of the submitted payload. The raw quote is not retained or returned by
 diagnostic APIs.
 
-`node_evidence_publishers` is the TPM publisher role mapping. Each key is the
-lowercase `sha256:` digest of a client certificate's DER encoding, and each
-value lists the node names that certificate may challenge and publish for. The
-generic TPM provider requires TLS, client-certificate verification, and at
-least one authorized publisher for every enrolled node. Obtain the hex digest
+Each node enrollment contains one or more publisher-certificate hashes. The
+generic TPM provider requires TLS, client-certificate verification, an active
+node enrollment, and an authorized publisher certificate. Obtain the digest
 for a PEM certificate with:
 
 ```sh
-openssl x509 -in agent.crt -outform DER | shasum -a 256
+printf 'sha256:'
+openssl x509 -in agent.crt -outform DER | shasum -a 256 | cut -d' ' -f1
 ```
 
 The `tpm-only` policy proves freshness, quote integrity, and possession of the

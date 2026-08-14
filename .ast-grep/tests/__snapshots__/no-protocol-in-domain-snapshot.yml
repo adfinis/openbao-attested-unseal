@@ -11,3 +11,14 @@ snapshots:
       style: primary
       start: 18
       end: 94
+  ? |
+    package p
+
+    import wire "github.com/adfinis/openbao-attested-unseal/internal/protocol/future/v2"
+
+    func use(record *wire.NodeEvidenceRecord) {}
+  : labels:
+    - source: wire "github.com/adfinis/openbao-attested-unseal/internal/protocol/future/v2"
+      style: primary
+      start: 18
+      end: 95
