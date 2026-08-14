@@ -11,6 +11,10 @@ bootstrap: ## Prepare local development prerequisites.
 	@$(MAKE) install-go-tools
 	@$(MAKE) install-proto-tools
 
+.PHONY: clean-worktree
+clean-worktree: ## Remove ignored build outputs and checkout-local tools.
+	@rm -rf bin dist .github/tools/node_modules
+
 .PHONY: install-go-tools
 install-go-tools: ## Install pinned optional Go quality tools into bin/.
 	@mkdir -p "$(GOBIN)"
