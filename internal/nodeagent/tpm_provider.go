@@ -11,10 +11,8 @@ import (
 	tpmlocal "github.com/adfinis/openbao-attested-unseal/internal/tpm"
 )
 
-var (
-	// ErrTPMNodeEvidence indicates that TPM node evidence collection or local verification failed.
-	ErrTPMNodeEvidence = errors.New("TPM node evidence failed")
-)
+// ErrTPMNodeEvidence indicates that TPM node evidence collection or local verification failed.
+var ErrTPMNodeEvidence = errors.New("TPM node evidence failed")
 
 // TPMQuoteCollector collects one TPM quote for node evidence publishing.
 type TPMQuoteCollector interface {
