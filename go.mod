@@ -1,6 +1,6 @@
 module github.com/adfinis/openbao-attested-unseal
 
-go 1.26.4
+go 1.26.6
 
 require (
 	github.com/google/go-tpm v0.9.8
